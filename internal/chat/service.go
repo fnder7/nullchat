@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"nullchat/internal/realtime"
 )
 
 var (
@@ -59,19 +61,11 @@ type Credentials struct {
 	InviteToken  string      `json:"invite_token,omitempty"`
 }
 
-type Event struct {
-	Type    string `json:"type"`
-	Payload any    `json:"payload"`
-}
+type Event = realtime.Event
 
 type SnapshotEvent struct {
 	Room Snapshot    `json:"room"`
 	Self Participant `json:"self"`
-}
-
-type subscription struct {
-	session *session
-	events  chan Event
 }
 
 type room struct {
@@ -81,14 +75,12 @@ type room struct {
 	participants []Participant
 	messages     []Message
 	sessions     map[[32]byte]*session
-	subs         map[*subscription]struct{}
 }
 
 type session struct {
-	room        *room
-	self        Participant
-	lastSend    time.Time
-	connections int
+	room     *room
+	self     Participant
+	lastSend time.Time
 }
 
 // Service is the single-process demo implementation. One mutex makes admission,
@@ -100,6 +92,7 @@ type Service struct {
 	rooms    map[string]*room
 	invites  map[[32]byte]*room
 	sessions map[[32]byte]*session
+	hub      *realtime.Hub
 	closed   bool
 }
 
@@ -112,7 +105,7 @@ var generatedNames = []string{
 }
 
 func New() *Service {
-	return &Service{now: time.Now, rooms: make(map[string]*room), invites: make(map[[32]byte]*room), sessions: make(map[[32]byte]*session)}
+	return &Service{now: time.Now, rooms: make(map[string]*room), invites: make(map[[32]byte]*room), sessions: make(map[[32]byte]*session), hub: realtime.New()}
 }
 
 func token() string {
@@ -124,6 +117,11 @@ func token() string {
 }
 
 func digest(s string) [32]byte { return sha256.Sum256([]byte(s)) }
+
+func digestKey(s string) string {
+	d := digest(s)
+	return hex.EncodeToString(d[:])
+}
 
 func randomName(r *room) string {
 	used := make(map[string]struct{}, len(r.participants))
@@ -164,7 +162,7 @@ func (s *Service) Create(ctx context.Context, title string, ttlMinutes int) (Cre
 		return Credentials{}, ErrCapacity
 	}
 	invite := token()
-	r := &room{id: token()[:24], title: title, expiresAt: s.now().Add(time.Duration(ttlMinutes) * time.Minute), invite: digest(invite), sessions: make(map[[32]byte]*session), subs: make(map[*subscription]struct{}), messages: []Message{}}
+	r := &room{id: token()[:24], title: title, expiresAt: s.now().Add(time.Duration(ttlMinutes) * time.Minute), invite: digest(invite), sessions: make(map[[32]byte]*session), messages: []Message{}}
 	s.rooms[r.id] = r
 	s.invites[r.invite] = r
 	credential := s.addSession(r)
@@ -222,36 +220,20 @@ func (s *Service) Subscribe(ctx context.Context, t string) (<-chan Event, func()
 	if ss == nil || s.closed {
 		return nil, nil, ErrSession
 	}
-	if ss.connections >= 2 {
+	sub, ok := s.hub.Subscribe(ss.room.id, digestKey(t), 2)
+	if !ok {
 		return nil, nil, ErrCapacity
 	}
-	sub := &subscription{session: ss, events: make(chan Event, 64)}
-	ss.connections++
-	ss.room.subs[sub] = struct{}{}
-	sub.events <- Event{Type: "snapshot", Payload: SnapshotEvent{Room: ss.room.snapshot(), Self: ss.self}}
-	return sub.events, func() {
+	sub.Events <- Event{Type: "snapshot", Payload: SnapshotEvent{Room: ss.room.snapshot(), Self: ss.self}}
+	return sub.Events, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.removeSub(ss.room, sub)
+		s.hub.Unsubscribe(sub)
 	}, nil
 }
 
-func (s *Service) removeSub(r *room, sub *subscription) {
-	if _, ok := r.subs[sub]; ok {
-		delete(r.subs, sub)
-		sub.session.connections--
-		close(sub.events)
-	}
-}
-
 func (s *Service) broadcast(r *room, event Event) {
-	for sub := range r.subs {
-		select {
-		case sub.events <- event:
-		default:
-			s.removeSub(r, sub)
-		}
-	}
+	s.hub.Publish(r.id, event)
 }
 
 func (s *Service) Send(ctx context.Context, t, clientID, body string) (Message, error) {
@@ -315,19 +297,8 @@ func (s *Service) End(ctx context.Context, t string) error {
 }
 
 func (s *Service) endRoom(r *room, reason string) {
-	for sub := range r.subs {
-		// Discard queued chat events; expiration must take priority.
-	drain:
-		for {
-			select {
-			case <-sub.events:
-			default:
-				break drain
-			}
-		}
-		sub.events <- Event{Type: reason, Payload: struct{}{}}
-		s.removeSub(r, sub)
-	}
+	// Discard queued chat events; expiration must take priority.
+	s.hub.CloseRoom(r.id, Event{Type: reason, Payload: struct{}{}})
 	for key := range r.sessions {
 		delete(s.sessions, key)
 	}
