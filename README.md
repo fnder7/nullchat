@@ -1,93 +1,91 @@
 # nullchat
 
+Временный чат на двоих без регистрации. Собственный backend на Go, WebSocket и небольшой веб-интерфейс, встроенный в исполняемый файл. Matrix не используется.
 
+Создай комнату → отправь одноразовую ссылку → общайся до конца таймера.
 
-## Getting started
+## Запуск
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+Требуется Go 1.24 или новее. При первом запуске Go загрузит единственную внешнюю зависимость — `github.com/coder/websocket`.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.com/matt.nolimiteron/nullchat.git
-git branch -M main
-git push -uf origin main
+```sh
+go run ./cmd/server
 ```
 
-## Integrate with your tools
+Открой [http://127.0.0.1:8080](http://127.0.0.1:8080). Создай комнату и открой приглашение в другом браузере, приватном окне или отдельной вкладке. Для проверки TTL выбери «1 минута».
 
-* [Set up project integrations](https://gitlab.com/matt.nolimiteron/nullchat/-/settings/integrations)
+Сессия хранится в `sessionStorage` конкретной вкладки. Обновление страницы сохраняет доступ; копирование адреса `#room=…` не передаёт сессию. Для приглашения используй кнопку «Скопировать ссылку».
 
-## Collaborate with your team
+Другой адрес:
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```sh
+ADDR=127.0.0.1:9000 go run ./cmd/server
+```
 
-## Test and Deploy
+Собрать самостоятельный бинарник с веб-интерфейсом:
 
-Use the built-in continuous integration in GitLab.
+```sh
+go build -buildvcs=false -o bin/nullchat ./cmd/server
+./bin/nullchat
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Или через Docker:
 
-***
+```sh
+docker compose up --build
+```
 
-# Editing this README
+Для публичного развёртывания нужен HTTPS reverse proxy. По умолчанию демо доступно только на loopback. Frontend и API обслуживаются с одного origin; Node.js и отдельный frontend-сервер для запуска не нужны.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## Что работает
 
-## Suggestions for a good README
+- Комнаты на двоих с TTL от 1 до 60 минут, отсчитываемым с создания.
+- Отдельные сессии создателя и гостя; приглашение используется один раз.
+- Переписка через WebSocket, подтверждения приёма и защита от дубликатов.
+- Автоматическое переподключение и восстановление истории действующей комнаты.
+- Закрытие комнаты по TTL или командой любого участника.
+- Ограниченные очереди событий, heartbeat, базовые лимиты и graceful shutdown.
+- Адаптивный русскоязычный интерфейс, состояния ошибок и завершения чата.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## Границы демо
 
-## Name
-Choose a self-explaining name for your project.
+Один процесс, хранение в памяти. Перезапуск сервера удаляет комнаты, историю и сессии. Данные не переживают сбой, а `ack` означает только принятие в память сервера, не получение собеседником. Максимум 100 комнат, 500 сообщений на комнату и 400 соединений. Повторное подключение получает всю историю, а не инкрементальный поток.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Сессия живёт до окончания комнаты, даже если вкладка закрыта. Возврат после закрытия зависит от того, восстановит ли браузер её `sessionStorage`; гарантируется обновление существующей вкладки. Неотправленные сообщения сохраняются только в памяти открытой страницы. При потере HTTP-ответа на вход одноразовое приглашение может оказаться использованным без получения сессии — идемпотентный вход запланирован для следующего этапа.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Сервис не запрашивает персональные данные и не пишет прикладные access-логи. Сервер видит открытый текст; E2EE нет. Удаление ссылок на объекты в памяти не является гарантированным физическим стиранием. Участник может сохранить полученную переписку. При настройке reverse proxy его журналирование нужно учитывать отдельно.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Проверки
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```sh
+go test -race ./...
+go vet ./...
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Тесты проверяют конкурентное использование приглашения, дедупликацию, TTL, отсутствие разрыва между историей и подпиской, медленного подписчика, отзыв сессий, валидацию HTTP и реальный WebSocket-обмен с переподключением. Интеграционным тестам нужен доступ к локальным TCP-портам. Для `-race` требуется поддерживаемая платформа и C toolchain.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Ручной сценарий:
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+1. Создать комнату, открыть приглашение в другом окне и войти.
+2. Отправить сообщения в обе стороны, обновить одну вкладку и проверить историю.
+3. Повторно открыть приглашение: третий участник войти не должен.
+4. Отключить сеть, вернуть её и проверить восстановление соединения.
+5. Завершить чат: оба участника теряют доступ, история исчезает из интерфейса.
+6. Создать комнату на минуту и проверить автоматическое закрытие.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+## Устройство проекта
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```text
+cmd/server/       конфигурация, сборка зависимостей, запуск и остановка
+internal/chat/    правила комнат, сессии, история и подписки в памяти
+internal/httpapi/ HTTP, WebSocket, аутентификация и ограничения транспорта
+web/              HTML, CSS и JavaScript, встроенные через go:embed
+docs/             архитектурные решения, план и архив исходного ТЗ
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Прикладная логика не импортирует HTTP или WebSocket. Интерфейс `httpapi.Chat` описывает нужные транспорту операции. В демо правила и хранение в памяти находятся вместе; полноценный порт хранилища появится при реализации PostgreSQL. Это небольшой монолит с границей приложения и транспорта, а не законченная реализация всех слоёв гексагональной архитектуры.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- [Актуальное ТЗ](SPEC.md)
+- [Пошаговый план модернизации: PostgreSQL, надёжность и два сервиса](docs/PLAN.md)
+- [Архитектура и возможные два сервиса](docs/ARCHITECTURE.md)
+- [Исходное предложение с Matrix — архив](docs/archive/matrix-gateway-draft.md)
