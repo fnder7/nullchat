@@ -76,3 +76,32 @@ func TestHubUnsubscribeIsIdempotent(t *testing.T) {
 		t.Fatal("subscription channel is still open")
 	}
 }
+
+func TestHubCloseAllClosesSubscriptionsWithoutTerminalEvent(t *testing.T) {
+	h := New()
+	var subscriptions []*Subscription
+	for _, room := range []string{"one", "two"} {
+		for range 2 {
+			sub, ok := h.Subscribe(room, room, 2)
+			if !ok {
+				t.Fatal("subscription rejected")
+			}
+			subscriptions = append(subscriptions, sub)
+		}
+		h.Publish(room, Event{Type: "message"})
+	}
+	h.CloseAll()
+	h.CloseAll()
+	for _, sub := range subscriptions {
+		for event := range sub.Events {
+			if event.Type != "message" {
+				t.Fatalf("shutdown emitted %q", event.Type)
+			}
+		}
+		h.Unsubscribe(sub)
+	}
+	if _, ok := h.Subscribe("one", "one", 2); !ok {
+		t.Fatal("closed subscriptions still consume capacity")
+	}
+	h.CloseAll()
+}

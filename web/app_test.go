@@ -1,0 +1,138 @@
+package web
+
+import (
+	"os/exec"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestFrontendStaticAccessibilityContract(t *testing.T) {
+	html, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(html), `aria-label="n_nullchat. — на главную"`) {
+		t.Error("brand accessible name does not include its visible text")
+	}
+
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := string(css)
+	if !strings.Contains(style, "--muted-subtle:#84907f") {
+		t.Error("subtle text color token is missing")
+	}
+	for _, selector := range []string{
+		".flow .flow-arrow",
+		"label span",
+		"input::placeholder,textarea::placeholder",
+		".card-footnote",
+		".principle-num",
+	} {
+		t.Run(selector, func(t *testing.T) {
+			declaration := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*color:\s*var\(--muted-subtle\)\s*;`)
+			if !declaration.MatchString(style) {
+				t.Errorf("%s does not use the subtle text color token", selector)
+			}
+		})
+	}
+}
+
+func TestFrontendRetriesTransientWebSocketCloseWithoutDeletingSession(t *testing.T) {
+	if output, err := exec.Command("node", "--check", "app.js").CombinedOutput(); err != nil {
+		t.Fatalf("frontend syntax: %v\n%s", err, output)
+	}
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "if (event.code === 1008) { finish") {
+		t.Fatal("permanent WebSocket authentication close no longer finishes the session")
+	}
+	if !strings.Contains(text, "if (event.code === 1013)") {
+		t.Fatal("database-unavailable close is not surfaced as retryable")
+	}
+	closeHandler := text[strings.Index(text, "ws.onclose ="):]
+	if strings.Contains(closeHandler, "sessionStorage.removeItem") {
+		t.Fatal("retryable close handler deletes persisted credentials")
+	}
+}
+
+func TestFrontendUsesKnownRetryableWebSocketCloseReasonWithDatabaseFallback(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "showError('chat-error', errors[event.reason] || errors.database_unavailable);") {
+		t.Fatal("retryable WebSocket close reason is overwritten or lacks database-unavailable fallback")
+	}
+}
+
+func TestFrontendSuccessfulManualRetryClearsStaleError(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "$('messages').addEventListener('click'")
+	end := strings.Index(text, "$('message-form').addEventListener('submit'")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("could not locate manual retry handler boundaries")
+	}
+	handler := text[start:end]
+	if !strings.Contains(handler, "const sent = transmit(entry);") {
+		t.Fatal("manual retry handler does not capture the transmit result")
+	}
+	if !strings.Contains(handler, "if (sent) showError('chat-error');") {
+		t.Fatal("manual retry handler does not clear stale error only after a successful send")
+	}
+}
+
+func TestFrontendCopyMatchesPersistenceContract(t *testing.T) {
+	source, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "История доступна участникам до закрытия комнаты. Без E2EE.") {
+		t.Fatal("footer does not describe PostgreSQL persistence contract")
+	}
+	if strings.Contains(text, "история хранится в памяти") {
+		t.Fatal("footer still describes in-memory history")
+	}
+}
+
+func TestFrontendUsesOperationSpecificErrors(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"async function api(path, data, token, key = '', errorOverrides = {})",
+		"errorOverrides[result.error] || errors[result.error] || 'Не удалось выполнить запрос. Попробуй ещё раз.'",
+		"api('/api/v1/rooms', { title: $('title').value, ttl_minutes: Number($('ttl').value) }, '', retryKey('create'), { database_unavailable: 'Сервер временно недоступен. Комната не создана — попробуй ещё раз.' })",
+		"api('/api/v1/join', { invite_token: new URLSearchParams(location.hash.slice(1)).get('invite') }, '', retryKey('join'), { invalid_input: 'Приглашение недействительно. Проверь ссылку или попроси новую.' })",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("frontend lacks operation-specific error contract: %q", required)
+		}
+	}
+}
+
+func TestFrontendRoomURLWithoutSessionUsesNeutralCopy(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "Не удалось открыть комнату. Используй действующее приглашение или создай новую.") {
+		t.Fatal("room URL without local credentials lacks neutral recovery copy")
+	}
+	if strings.Contains(text, "В этой вкладке нет сессии комнаты") {
+		t.Fatal("room URL still exposes missing sessionStorage as the recovery copy")
+	}
+}

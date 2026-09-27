@@ -81,6 +81,17 @@ func (h *Hub) CloseRoom(roomKey string, event Event) {
 	}
 }
 
+// CloseAll releases subscriptions without declaring any room terminal.
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, subscriptions := range h.rooms {
+		for sub := range subscriptions {
+			h.unsubscribeLocked(sub)
+		}
+	}
+}
+
 func (h *Hub) unsubscribeLocked(sub *Subscription) {
 	if sub == nil || sub.closed {
 		return

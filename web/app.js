@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const MAX_RECONNECT_ATTEMPTS = 8;
 const state = { credentials: null, socket: null, room: null, self: null, invite: '', pending: new Map(), failed: new Map(), accepted: new Map(), ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0 };
+const requestKeys = { create: '', join: '' };
 const errors = {
   room_unavailable: 'Приглашение уже использовано, комната закрыта или её время истекло.',
   session_invalid: 'Сессия больше недоступна. Возможно, истекло время комнаты или разговор уже завершён.',
@@ -19,14 +20,16 @@ const errors = {
 };
 
 function showError(id, text = '') { $(id).textContent = text; $(id).hidden = !text; }
+function retryKey(kind) { return requestKeys[kind] || (requestKeys[kind] = crypto.randomUUID()); }
 function save() {
   if (!state.credentials) return;
   sessionStorage.setItem(`nullchat:${state.room.id}`, JSON.stringify({ ...state.credentials, room: { ...state.room, messages: [] }, invite_token: state.invite }));
 }
-async function api(path, data, token) {
-  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(data), signal: AbortSignal.timeout(10000) });
+async function api(path, data, token, key = '', errorOverrides = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+  const response = await fetch(path, { method: 'POST', headers, body: JSON.stringify(data), signal: AbortSignal.timeout(10000) });
   const result = await response.json();
-  if (!response.ok) throw new Error(errors[result.error] || 'Не удалось выполнить запрос. Попробуй ещё раз.');
+  if (!response.ok) throw new Error(errorOverrides[result.error] || errors[result.error] || 'Не удалось выполнить запрос. Попробуй ещё раз.');
   return result;
 }
 function checkStorage() {
@@ -216,6 +219,7 @@ function connect() {
   ws.onclose = (event) => {
     if (state.ended) return;
     if (event.code === 1008) { finish('Подключение отклонено. Открой новую комнату'); return; }
+    if (event.code === 1013) showError('chat-error', errors[event.reason] || errors.database_unavailable);
     scheduleReconnect();
   };
   ws.onerror = () => { /* onclose drives reconnection; never discard pending messages here. */ };
@@ -229,16 +233,28 @@ function updateTimer() {
 
 $('create-form').addEventListener('submit', async (event) => {
   event.preventDefault(); showError('home-error'); $('create-button').disabled = true;
-  try { checkStorage(); enter(await api('/api/v1/rooms', { title: $('title').value, ttl_minutes: Number($('ttl').value) })); }
+  try {
+    checkStorage();
+    const credentials = await api('/api/v1/rooms', { title: $('title').value, ttl_minutes: Number($('ttl').value) }, '', retryKey('create'), { database_unavailable: 'Сервер временно недоступен. Комната не создана — попробуй ещё раз.' });
+    requestKeys.create = '';
+    enter(credentials);
+  }
   catch (e) { showError('home-error', e.message); }
   finally { $('create-button').disabled = false; }
 });
 $('join-button').addEventListener('click', async () => {
   $('join-button').disabled = true; showError('home-error');
-  try { checkStorage(); enter(await api('/api/v1/join', { invite_token: new URLSearchParams(location.hash.slice(1)).get('invite') })); }
+  try {
+    checkStorage();
+    const credentials = await api('/api/v1/join', { invite_token: new URLSearchParams(location.hash.slice(1)).get('invite') }, '', retryKey('join'), { invalid_input: 'Приглашение недействительно. Проверь ссылку или попроси новую.' });
+    requestKeys.join = '';
+    enter(credentials);
+  }
   catch (e) { showError('home-error', e.message); }
   finally { $('join-button').disabled = false; }
 });
+$('title').addEventListener('input', () => { requestKeys.create = ''; });
+$('ttl').addEventListener('input', () => { requestKeys.create = ''; });
 $('copy-button').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('invite-link').value); $('copy-button').textContent = 'Ссылка скопирована ✓'; }
   catch { $('invite-link').focus(); $('invite-link').select(); $('copy-button').textContent = 'Скопируй выделенную ссылку'; }
@@ -261,7 +277,8 @@ $('messages').addEventListener('click', (event) => {
   if (!button) return;
   const entry = state.failed.get(button.dataset.retryId);
   if (!entry) return;
-  transmit(entry);
+  const sent = transmit(entry);
+  if (sent) showError('chat-error');
   renderMessages();
 });
 $('message-form').addEventListener('submit', (event) => {
@@ -291,6 +308,6 @@ if (params.has('invite')) {
     checkStorage();
     const saved = sessionStorage.getItem(`nullchat:${params.get('room')}`);
     if (saved) enter(JSON.parse(saved));
-    else { history.replaceState(null, '', '/'); showError('home-error', 'В этой вкладке нет сессии комнаты. Попроси новое приглашение или создай свою комнату.'); }
+    else { history.replaceState(null, '', '/'); showError('home-error', 'Не удалось открыть комнату. Используй действующее приглашение или создай новую.'); }
   } catch { showError('home-error', 'Не удалось восстановить сессию. Создай новую комнату.'); }
 }

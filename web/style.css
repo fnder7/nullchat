@@ -5,6 +5,7 @@
   --line:#303730;
   --text:#e8ede3;
   --muted:#939d91;
+  --muted-subtle:#84907f;
   --accent:#ccf88b;
   --error:#ffafa2;
   font-family:Inter,"Segoe UI",Arial,sans-serif;
@@ -183,7 +184,7 @@ h1 {
 }
 
 .flow .flow-arrow {
-  color:#53624a;
+  color:var(--muted-subtle);
 }
 
 .small-print {
@@ -246,7 +247,7 @@ label {
 }
 
 label span {
-  color:#778171;
+  color:var(--muted-subtle);
   font-size:11px;
   margin-left:5px;
 }
@@ -262,7 +263,7 @@ input,select {
 }
 
 input::placeholder,textarea::placeholder {
-  color:#717c6e;
+  color:var(--muted-subtle);
 }
 
 select {
@@ -315,7 +316,7 @@ select {
 
 .card-footnote {
   font-size:10px;
-  color:#7a8674;
+  color:var(--muted-subtle);
   text-align:center;
   margin:18px 0 0;
 }
@@ -337,7 +338,7 @@ select {
 
 .principle-num {
   font:10px monospace;
-  color:#73806c;
+  color:var(--muted-subtle);
 }
 
 .principles h3 {

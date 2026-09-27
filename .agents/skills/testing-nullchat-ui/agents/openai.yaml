@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test nullchat UI"
+  short_description: "Run repeatable nullchat UI regression"
+  default_prompt: "Run the required nullchat UI regression for the current change and record the report and findings."
