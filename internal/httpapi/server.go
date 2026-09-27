@@ -20,23 +20,68 @@ import (
 type Chat = chat.Application
 
 type Server struct {
-	chat        Chat
-	mu          sync.Mutex
-	connections map[*websocket.Conn]struct{}
-	closing     bool
+	chat             Chat
+	operationTimeout time.Duration
+	connectionLimit  int
+	accept           func(http.ResponseWriter, *http.Request, *websocket.AcceptOptions) (*websocket.Conn, error)
+	mu               sync.Mutex
+	connections      map[*websocket.Conn]struct{}
+	handlers         map[*websocket.Conn]context.CancelFunc
+	handlersDone     sync.WaitGroup
+	closing          bool
 	// Global admission budget bounds unauthenticated work without retaining IPs.
 	budget int
 	window time.Time
 }
 
 func New(service Chat) *Server {
-	return &Server{chat: service, connections: make(map[*websocket.Conn]struct{}), budget: 120, window: time.Now()}
+	return NewWithOperationTimeout(service, 0)
+}
+
+// NewWithOperationTimeout bounds each finite application operation. A zero
+// timeout preserves the transport's caller context, which is useful to small
+// in-process adapters and tests. Subscribe setup receives an operation context;
+// the returned stream remains governed by the socket context and unsubscribe.
+func NewWithOperationTimeout(service Chat, timeout time.Duration) *Server {
+	return &Server{
+		chat:             service,
+		operationTimeout: timeout,
+		connectionLimit:  400,
+		accept:           websocket.Accept,
+		connections:      make(map[*websocket.Conn]struct{}),
+		handlers:         make(map[*websocket.Conn]context.CancelFunc),
+		budget:           120,
+		window:           time.Now(),
+	}
+}
+
+func (s *Server) operationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if s.operationTimeout <= 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, s.operationTimeout)
+}
+
+func operationError(parent context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && parent.Err() == nil {
+		return chat.ErrDatabaseUnavailable
+	}
+	return err
 }
 
 func (s *Server) Handler(frontend http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		operationCtx, cancel := s.operationContext(r.Context())
+		defer cancel()
+		if err := operationError(r.Context(), s.chat.Ready(operationCtx)); err != nil {
+			fail(w, chat.ErrDatabaseUnavailable)
+			return
+		}
+		respond(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("POST /api/v1/rooms", s.create)
 	mux.HandleFunc("POST /api/v1/join", s.join)
@@ -86,12 +131,30 @@ func fail(w http.ResponseWriter, err error) {
 		status = http.StatusGone
 	case errors.Is(err, chat.ErrSession):
 		status = http.StatusUnauthorized
-	case errors.Is(err, chat.ErrCapacity), errors.Is(err, chat.ErrRate):
+	case errors.Is(err, chat.ErrCapacity), errors.Is(err, chat.ErrRoomFull), errors.Is(err, chat.ErrMessageLimit), errors.Is(err, chat.ErrConnectionLimit), errors.Is(err, chat.ErrRate):
 		status = http.StatusTooManyRequests
-	case errors.Is(err, chat.ErrConflict):
+	case errors.Is(err, chat.ErrConflict), errors.Is(err, chat.ErrIdempotencyConflict):
 		status = http.StatusConflict
+	case errors.Is(err, chat.ErrDatabaseUnavailable):
+		status = http.StatusServiceUnavailable
 	}
 	respond(w, status, map[string]string{"error": err.Error()})
+}
+
+func idempotencyKey(r *http.Request) (string, error) {
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" {
+		return "", nil
+	}
+	if len(key) < 32 || len(key) > 128 {
+		return "", chat.ErrInput
+	}
+	for i := range len(key) {
+		if key[i] < 0x21 || key[i] > 0x7e {
+			return "", chat.ErrInput
+		}
+	}
+	return key, nil
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -140,7 +203,15 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	c, err := s.chat.Create(r.Context(), input.Title, input.TTL)
+	key, err := idempotencyKey(r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	operationCtx, cancel := s.operationContext(r.Context())
+	defer cancel()
+	c, err := s.chat.Create(operationCtx, chat.CreateInput{Title: input.Title, TTLMinutes: input.TTL, IdempotencyKey: key})
+	err = operationError(r.Context(), err)
 	if err != nil {
 		fail(w, err)
 		return
@@ -162,7 +233,15 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		fail(w, chat.ErrInput)
 		return
 	}
-	c, err := s.chat.Join(r.Context(), input.Invite)
+	key, err := idempotencyKey(r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	operationCtx, cancel := s.operationContext(r.Context())
+	defer cancel()
+	c, err := s.chat.Join(operationCtx, chat.JoinInput{InviteToken: input.Invite, IdempotencyKey: key})
+	err = operationError(r.Context(), err)
 	if err != nil {
 		fail(w, err)
 		return
@@ -176,7 +255,9 @@ func (s *Server) end(w http.ResponseWriter, r *http.Request) {
 		fail(w, chat.ErrSession)
 		return
 	}
-	if err := s.chat.End(r.Context(), strings.TrimPrefix(r.Header.Get("Authorization"), prefix)); err != nil {
+	operationCtx, cancel := s.operationContext(r.Context())
+	defer cancel()
+	if err := operationError(r.Context(), s.chat.End(operationCtx, strings.TrimPrefix(r.Header.Get("Authorization"), prefix))); err != nil {
 		fail(w, err)
 		return
 	}
@@ -196,33 +277,61 @@ func write(ctx context.Context, c *websocket.Conn, event chat.Event) error {
 	return wsjson.Write(ctx, c, event)
 }
 
+func writeAndClose(c *websocket.Conn, event chat.Event, status websocket.StatusCode, reason string) {
+	_ = write(context.Background(), c, event)
+	_ = c.Close(status, reason)
+}
+
 func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 	if !s.admit(w) {
 		return
 	}
 	s.mu.Lock()
-	full := len(s.connections) >= 400 || s.closing
+	closing := s.closing
+	full := len(s.connections) >= s.connectionLimit
 	s.mu.Unlock()
-	if full {
-		fail(w, chat.ErrCapacity)
+	if closing {
+		respond(w, http.StatusServiceUnavailable, map[string]string{"error": "server_shutdown"})
 		return
 	}
-	c, err := websocket.Accept(w, r, nil)
+	if full {
+		fail(w, chat.ErrConnectionLimit)
+		return
+	}
+	c, err := s.accept(w, r, nil)
 	if err != nil {
 		return
 	}
 	s.mu.Lock()
-	if s.closing || len(s.connections) >= 400 {
+	closing = s.closing
+	full = len(s.connections) >= s.connectionLimit
+	if closing || full {
 		s.mu.Unlock()
-		_ = c.CloseNow()
+		if closing {
+			writeAndClose(c, chat.Event{Type: "server_shutdown"}, websocket.StatusGoingAway, "server_shutdown")
+		} else {
+			writeAndClose(c, chat.Event{Type: "error", Payload: map[string]string{"code": chat.ErrConnectionLimit.Error()}}, websocket.StatusTryAgainLater, chat.ErrConnectionLimit.Error())
+		}
 		return
 	}
 	s.connections[c] = struct{}{}
-	s.mu.Unlock()
-	defer func() { _ = c.CloseNow(); s.mu.Lock(); delete(s.connections, c); s.mu.Unlock() }()
-	c.SetReadLimit(8192)
 	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	s.handlers[c] = cancel
+	s.handlersDone.Add(1)
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		shuttingDown := s.closing
+		delete(s.connections, c)
+		delete(s.handlers, c)
+		s.mu.Unlock()
+		if !shuttingDown {
+			_ = c.CloseNow()
+		}
+		s.handlersDone.Done()
+	}()
+	c.SetReadLimit(8192)
 	authCtx, authCancel := context.WithTimeout(ctx, 5*time.Second)
 	var auth command
 	err = wsjson.Read(authCtx, c, &auth)
@@ -231,10 +340,20 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		_ = c.Close(websocket.StatusPolicyViolation, "authentication_required")
 		return
 	}
-	events, unsubscribe, err := s.chat.Subscribe(ctx, auth.SessionToken)
+	operationCtx, operationCancel := s.operationContext(ctx)
+	events, unsubscribe, err := s.chat.Subscribe(operationCtx, auth.SessionToken)
+	err = operationError(ctx, err)
+	operationCancel()
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		_ = write(ctx, c, chat.Event{Type: "error", Payload: map[string]string{"code": err.Error()}})
-		_ = c.Close(websocket.StatusPolicyViolation, err.Error())
+		status := websocket.StatusPolicyViolation
+		if errors.Is(err, chat.ErrDatabaseUnavailable) || errors.Is(err, chat.ErrConnectionLimit) {
+			status = websocket.StatusTryAgainLater
+		}
+		_ = c.Close(status, err.Error())
 		return
 	}
 	defer unsubscribe()
@@ -251,7 +370,10 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				_ = c.Close(websocket.StatusPolicyViolation, "unknown_command")
 				return
 			}
-			m, err := s.chat.Send(ctx, auth.SessionToken, cmd.ClientID, cmd.Text)
+			operationCtx, operationCancel := s.operationContext(ctx)
+			m, err := s.chat.Send(operationCtx, auth.SessionToken, cmd.ClientID, cmd.Text)
+			err = operationError(ctx, err)
+			operationCancel()
 			event := chat.Event{Type: "ack", Payload: m}
 			if err != nil {
 				event = chat.Event{Type: "error", Payload: map[string]string{"code": err.Error(), "client_message_id": cmd.ClientID}}
@@ -261,7 +383,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	defer func() { cancel(); _ = c.CloseNow(); <-readerDone }()
+	defer func() { cancel(); <-readerDone }()
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -300,14 +422,25 @@ func (s *Server) Shutdown() {
 	s.mu.Lock()
 	s.closing = true
 	connections := make([]*websocket.Conn, 0, len(s.connections))
+	cancels := make([]context.CancelFunc, 0, len(s.handlers))
 	for c := range s.connections {
 		connections = append(connections, c)
 	}
-	s.mu.Unlock()
-	var wg sync.WaitGroup
-	for _, c := range connections {
-		wg.Add(1)
-		go func() { defer wg.Done(); _ = c.Close(websocket.StatusGoingAway, "server_shutdown") }()
+	for _, cancel := range s.handlers {
+		cancels = append(cancels, cancel)
 	}
-	wg.Wait()
+	s.mu.Unlock()
+	var closesDone sync.WaitGroup
+	for _, c := range connections {
+		closesDone.Add(1)
+		go func() {
+			defer closesDone.Done()
+			writeAndClose(c, chat.Event{Type: "server_shutdown"}, websocket.StatusGoingAway, "server_shutdown")
+		}()
+	}
+	closesDone.Wait()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	s.handlersDone.Wait()
 }

@@ -10,57 +10,99 @@ import (
 	"syscall"
 	"time"
 
-	"nullchat/internal/chat"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"nullchat/internal/config"
 	"nullchat/internal/httpapi"
+	"nullchat/internal/storage/postgres"
 	"nullchat/web"
 )
 
 func main() {
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8080"
+	if err := run(); err != nil {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
-	service := chat.New()
-	api := httpapi.New(service)
-	server := &http.Server{Addr: addr, Handler: api.Handler(web.Handler()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+}
+
+func run() error {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		return err // Configuration errors contain field names, never values.
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return errors.New("invalid database configuration")
+	}
+	poolConfig.MaxConns = cfg.MaxConns
+	poolConfig.ConnConfig.ConnectTimeout = cfg.OperationTimeout
+	startupCtx, startupCancel := context.WithTimeout(ctx, cfg.OperationTimeout)
+	pool, err := pgxpool.NewWithConfig(startupCtx, poolConfig)
+	if err != nil {
+		startupCancel()
+		return errors.New("open database pool failed")
+	}
+	defer pool.Close()
+	err = pool.Ping(startupCtx)
+	startupCancel()
+	if err != nil {
+		return errors.New("database unavailable at startup")
+	}
+	// Migrations are an explicit operator action performed by cmd/migrate.
+	service := postgres.New(pool, cfg.IdempotencyKey)
+	defer service.Close() // Infrastructure only; never end rooms on shutdown.
+	api := newAPI(service, cfg.OperationTimeout)
+	server := &http.Server{Addr: cfg.Addr, Handler: api.Handler(web.Handler()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	workerCtx, cancelWorker := context.WithCancel(ctx)
+	defer cancelWorker()
+	expire := func() {
+		operationCtx, cancel := context.WithTimeout(workerCtx, cfg.OperationTimeout)
+		defer cancel()
+		if err := service.Expire(operationCtx); err != nil && workerCtx.Err() == nil {
+			slog.Warn("room expiry failed; will retry")
+		}
+	}
+	expire() // Recover expired rooms before serving, then retry on every tick.
 	expired := make(chan struct{})
 	go func() {
 		defer close(expired)
-		ticker := time.NewTicker(time.Second)
+		ticker := time.NewTicker(cfg.ExpiryInterval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-workerCtx.Done():
 				return
 			case <-ticker.C:
-				service.Expire()
+				expire()
 			}
 		}
 	}()
 	errCh := make(chan error, 1)
-	go func() { slog.Info("nullchat listening", "address", addr); errCh <- server.ListenAndServe() }()
+	go func() { slog.Info("nullchat listening", "address", cfg.Addr); errCh <- server.ListenAndServe() }()
+	var serveErr error
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("server failed", "error", err)
-			stop()
-			service.Close()
-			<-expired
-			os.Exit(1)
+			serveErr = err
 		}
 	}
 	stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	service.Close()
 	api.Shutdown()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown incomplete", "error", err)
 		_ = server.Close()
 	}
+	cancelWorker()
 	<-expired
 	slog.Info("nullchat stopped")
+	return serveErr
+}
+
+func newAPI(service httpapi.Chat, operationTimeout time.Duration) *httpapi.Server {
+	return httpapi.NewWithOperationTimeout(service, operationTimeout)
 }
