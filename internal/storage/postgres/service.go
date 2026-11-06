@@ -4,17 +4,19 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"strconv"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nullchat/internal/chat"
 	"nullchat/internal/realtime"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,6 +28,9 @@ type Service struct {
 	// Acquire only after the room lock. Keep commit/publication and snapshot
 	// registration/commit together so a snapshot is always the first event.
 	mu sync.Mutex
+	// expiryCause classifies the latest background expiry failure for operator
+	// logs: a SQLSTATE or error class, never messages, values or credentials.
+	expiryCause atomic.Value
 }
 
 func New(pool *pgxpool.Pool, key [32]byte) *Service {
@@ -54,11 +59,10 @@ func databaseNow(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input chat.CreateInput) (chat.Credentials, error) {
-	title, err := chat.NormalizeTitle(input.Title)
-	if err != nil || input.TTLMinutes < 1 || input.TTLMinutes > 60 {
-		return chat.Credentials{}, chat.ErrInput
+	if err := chat.ValidateCreate(input); err != nil {
+		return chat.Credentials{}, err
 	}
-	r := newIdempotencyRequest(input.IdempotencyKey, "/api/v1/rooms", title, strconv.Itoa(input.TTLMinutes))
+	r := newIdempotencyRequest(input.IdempotencyKey, "/api/v1/rooms", input.EncryptedTitle, strconv.Itoa(input.TTLMinutes), input.KeyShare.PublicKey, input.KeyShare.MAC, input.JoinVerifier)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
@@ -87,11 +91,12 @@ func (s *Service) Create(ctx context.Context, input chat.CreateInput) (chat.Cred
 	}
 	roomID, invite := token(), token()
 	var expires time.Time
-	if err := tx.QueryRow(ctx, `INSERT INTO rooms (id, title, status, expires_at)
-VALUES ($1, $2, 'open', clock_timestamp() + make_interval(mins => $3)) RETURNING expires_at`, roomID, title, input.TTLMinutes).Scan(&expires); err != nil {
+	verifier := digest(input.JoinVerifier)
+	if err := tx.QueryRow(ctx, `INSERT INTO rooms (id, encrypted_title, join_verifier_hash, status, expires_at)
+VALUES ($1, $2, $3, 'open', clock_timestamp() + make_interval(mins => $4)) RETURNING expires_at`, roomID, input.EncryptedTitle, verifier[:], input.TTLMinutes).Scan(&expires); err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
 	}
-	c, err := addParticipant(ctx, tx, roomID, expires, nil)
+	c, err := addParticipant(ctx, tx, roomID, expires, nil, input.KeyShare)
 	if err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
 	}
@@ -113,7 +118,10 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	if !validToken(input.InviteToken) {
 		return chat.Credentials{}, chat.ErrUnavailable
 	}
-	r := newIdempotencyRequest(input.IdempotencyKey, "/api/v1/join", input.InviteToken)
+	if err := chat.ValidateJoin(input); err != nil {
+		return chat.Credentials{}, err
+	}
+	r := newIdempotencyRequest(input.IdempotencyKey, "/api/v1/join", input.InviteToken, input.JoinProof, input.KeyShare.PublicKey, input.KeyShare.MAC)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
@@ -134,6 +142,8 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	var roomID, status string
 	var consumed *time.Time
 	var expires, inviteExpires time.Time
+	var verifier []byte
+	var failedJoins int
 	// Resolve without locking, then use the room -> invite order shared with
 	// terminal operations. Re-read the invite under lock before authorizing it.
 	err = tx.QueryRow(ctx, `SELECT room_id FROM invites WHERE token_hash = $1`, hash[:]).Scan(&roomID)
@@ -143,7 +153,7 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	if err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
 	}
-	err = tx.QueryRow(ctx, `SELECT status, expires_at FROM rooms WHERE id = $1 FOR UPDATE`, roomID).Scan(&status, &expires)
+	err = tx.QueryRow(ctx, `SELECT status, expires_at, join_verifier_hash, failed_joins FROM rooms WHERE id = $1 FOR UPDATE`, roomID).Scan(&status, &expires, &verifier, &failedJoins)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return chat.Credentials{}, chat.ErrUnavailable
 	}
@@ -164,6 +174,12 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	if consumed != nil || status != "open" || !expires.After(now) || !inviteExpires.After(now) {
 		return chat.Credentials{}, chat.ErrUnavailable
 	}
+	proof := digest(input.JoinProof)
+	if subtle.ConstantTimeCompare(proof[:], verifier) != 1 {
+		// A wrong proof (password) must not consume the seat, but online guessing
+		// is bounded: the failure is committed, and the last one burns the invite.
+		return chat.Credentials{}, s.rejectJoin(ctx, tx, roomID, hash, failedJoins+1)
+	}
 	participants, err := readParticipants(ctx, tx, roomID)
 	if err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
@@ -171,7 +187,7 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	if len(participants) >= 2 {
 		return chat.Credentials{}, chat.ErrRoomFull
 	}
-	c, err := addParticipant(ctx, tx, roomID, expires, participants)
+	c, err := addParticipant(ctx, tx, roomID, expires, participants, input.KeyShare)
 	if err != nil {
 		return chat.Credentials{}, chat.ErrDatabaseUnavailable
 	}
@@ -190,13 +206,44 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	return c, nil
 }
 
-func addParticipant(ctx context.Context, tx pgx.Tx, roomID string, expires time.Time, existing []chat.Participant) (chat.Credentials, error) {
+// rejectJoin records a failed join proof under the room lock and commits it, so
+// that the attempt counts even though the request fails.
+func (s *Service) rejectJoin(ctx context.Context, tx pgx.Tx, roomID string, inviteHash [32]byte, failures int) error {
+	if _, err := tx.Exec(ctx, `UPDATE rooms SET failed_joins = $2 WHERE id = $1`, roomID, failures); err != nil {
+		return databaseError(ctx, err)
+	}
+	revoked := failures >= chat.MaxJoinAttempts
+	if revoked {
+		if _, err := tx.Exec(ctx, `UPDATE invites SET consumed_at = COALESCE(consumed_at, clock_timestamp()) WHERE token_hash = $1`, inviteHash[:]); err != nil {
+			return databaseError(ctx, err)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := tx.Commit(ctx); err != nil {
+		return databaseError(ctx, err)
+	}
+	if revoked {
+		s.hub.Publish(roomID, chat.Event{Type: "invite_revoked", Payload: struct{}{}})
+	}
+	return chat.ErrJoinProof
+}
+
+func roleForSlot(slot int) string {
+	if slot == 1 {
+		return chat.RoleCreator
+	}
+	return chat.RoleGuest
+}
+
+func addParticipant(ctx context.Context, tx pgx.Tx, roomID string, expires time.Time, existing []chat.Participant, share chat.KeyShare) (chat.Credentials, error) {
 	name, err := chat.GenerateParticipantName(existing)
 	if err != nil {
 		return chat.Credentials{}, err
 	}
-	p := chat.Participant{ID: token(), Name: name}
-	if _, err := tx.Exec(ctx, `INSERT INTO participants (id, room_id, slot, name) VALUES ($1, $2, $3, $4)`, p.ID, roomID, len(existing)+1, p.Name); err != nil {
+	slot := len(existing) + 1
+	p := chat.Participant{ID: token(), Name: name, Role: roleForSlot(slot), KeyShare: share}
+	if _, err := tx.Exec(ctx, `INSERT INTO participants (id, room_id, slot, name, public_key, key_mac) VALUES ($1, $2, $3, $4, $5, $6)`, p.ID, roomID, slot, p.Name, share.PublicKey, share.MAC); err != nil {
 		return chat.Credentials{}, err
 	}
 	secret := token()
@@ -242,8 +289,10 @@ func (s *Service) Subscribe(ctx context.Context, secret string) (<-chan chat.Eve
 	}
 	// Recheck authorization after taking the room lock, including time spent waiting.
 	var self chat.Participant
-	err = tx.QueryRow(ctx, `SELECT p.id, p.name FROM sessions s JOIN participants p ON p.room_id = s.room_id AND p.id = s.participant_id
-WHERE s.token_hash = $1 AND s.room_id = $2 AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()`, hash[:], roomID).Scan(&self.ID, &self.Name)
+	var slot int
+	err = tx.QueryRow(ctx, `SELECT p.id, p.name, p.slot, p.public_key, p.key_mac FROM sessions s JOIN participants p ON p.room_id = s.room_id AND p.id = s.participant_id
+WHERE s.token_hash = $1 AND s.room_id = $2 AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()`, hash[:], roomID).Scan(&self.ID, &self.Name, &slot, &self.KeyShare.PublicKey, &self.KeyShare.MAC)
+	self.Role = roleForSlot(slot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, chat.ErrSession
 	}
@@ -277,7 +326,7 @@ WHERE s.token_hash = $1 AND s.room_id = $2 AND s.revoked_at IS NULL AND s.expire
 }
 
 func readParticipants(ctx context.Context, tx pgx.Tx, roomID string) ([]chat.Participant, error) {
-	rows, err := tx.Query(ctx, `SELECT id, name FROM participants WHERE room_id = $1 ORDER BY slot`, roomID)
+	rows, err := tx.Query(ctx, `SELECT id, name, slot, public_key, key_mac FROM participants WHERE room_id = $1 ORDER BY slot`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,9 +334,11 @@ func readParticipants(ctx context.Context, tx pgx.Tx, roomID string) ([]chat.Par
 	participants := make([]chat.Participant, 0, 2)
 	for rows.Next() {
 		var p chat.Participant
-		if err := rows.Scan(&p.ID, &p.Name); err != nil {
+		var slot int
+		if err := rows.Scan(&p.ID, &p.Name, &slot, &p.KeyShare.PublicKey, &p.KeyShare.MAC); err != nil {
 			return nil, err
 		}
+		p.Role = roleForSlot(slot)
 		participants = append(participants, p)
 	}
 	return participants, rows.Err()
@@ -296,7 +347,7 @@ func readParticipants(ctx context.Context, tx pgx.Tx, roomID string) ([]chat.Par
 // The caller must hold a room lock for the entire snapshot read.
 func readSnapshot(ctx context.Context, tx pgx.Tx, roomID string) (chat.Snapshot, error) {
 	r := chat.Snapshot{Messages: []chat.Message{}}
-	if err := tx.QueryRow(ctx, `SELECT id, title, expires_at FROM rooms WHERE id = $1`, roomID).Scan(&r.ID, &r.Title, &r.ExpiresAt); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id, encrypted_title, expires_at FROM rooms WHERE id = $1`, roomID).Scan(&r.ID, &r.EncryptedTitle, &r.ExpiresAt); err != nil {
 		return chat.Snapshot{}, err
 	}
 	var err error
@@ -304,19 +355,50 @@ func readSnapshot(ctx context.Context, tx pgx.Tx, roomID string) (chat.Snapshot,
 	if err != nil {
 		return chat.Snapshot{}, err
 	}
-	rows, err := tx.Query(ctx, `SELECT sequence, id, client_message_id, participant_id, text, created_at FROM messages WHERE room_id = $1 ORDER BY sequence`, roomID)
+	rows, err := tx.Query(ctx, `SELECT sequence, id, client_message_id, participant_id, ciphertext, created_at FROM messages WHERE room_id = $1 ORDER BY sequence`, roomID)
 	if err != nil {
 		return chat.Snapshot{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var m chat.Message
-		if err := rows.Scan(&m.Sequence, &m.ID, &m.ClientID, &m.SenderID, &m.Text, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.Sequence, &m.ID, &m.ClientID, &m.SenderID, &m.Ciphertext, &m.CreatedAt); err != nil {
 			return chat.Snapshot{}, err
 		}
 		r.Messages = append(r.Messages, m)
 	}
 	return r, rows.Err()
+}
+
+// failureCause names an error class that is safe to log: the SQLSTATE of a
+// server error (for example 42P01 when migrations were not applied), or the kind
+// of transport failure. Messages may contain values and are never included.
+func failureCause(err error) string {
+	var pgErr *pgconn.PgError
+	var connectErr *pgconn.ConnectError
+	switch {
+	case errors.As(err, &pgErr):
+		return "sqlstate " + pgErr.Code
+	case errors.As(err, &connectErr):
+		return "connect"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case pgconn.SafeToRetry(err) || pgconn.Timeout(err):
+		return "connection"
+	default:
+		return "other"
+	}
+}
+
+// ExpiryFailureCause returns the class of the latest failed Expire call.
+func (s *Service) ExpiryFailureCause() string {
+	cause, _ := s.expiryCause.Load().(string)
+	return cause
+}
+
+func (s *Service) expiryError(ctx context.Context, err error) error {
+	s.expiryCause.Store(failureCause(err))
+	return databaseError(ctx, err)
 }
 
 // Database details never cross the application boundary. A caller's canceled
@@ -382,8 +464,7 @@ func (s *Service) Send(ctx context.Context, secret, clientID, body string) (chat
 	if !validToken(secret) {
 		return chat.Message{}, chat.ErrSession
 	}
-	body, err := normalizeSendInput(clientID, body)
-	if err != nil {
+	if err := chat.ValidateMessage(clientID, body); err != nil {
 		return chat.Message{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -396,9 +477,9 @@ func (s *Service) Send(ctx context.Context, secret, clientID, body string) (chat
 		return chat.Message{}, err
 	}
 	var message chat.Message
-	err = tx.QueryRow(ctx, `SELECT sequence, id, client_message_id, participant_id, text, created_at FROM messages WHERE room_id = $1 AND participant_id = $2 AND client_message_id = $3`, session.roomID, session.participantID, clientID).Scan(&message.Sequence, &message.ID, &message.ClientID, &message.SenderID, &message.Text, &message.CreatedAt)
+	err = tx.QueryRow(ctx, `SELECT sequence, id, client_message_id, participant_id, ciphertext, created_at FROM messages WHERE room_id = $1 AND participant_id = $2 AND client_message_id = $3`, session.roomID, session.participantID, clientID).Scan(&message.Sequence, &message.ID, &message.ClientID, &message.SenderID, &message.Ciphertext, &message.CreatedAt)
 	if err == nil {
-		if message.Text != body {
+		if message.Ciphertext != body {
 			return chat.Message{}, chat.ErrConflict
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -415,8 +496,8 @@ func (s *Service) Send(ctx context.Context, secret, clientID, body string) (chat
 	if session.lastSend != nil && session.now.Sub(*session.lastSend) < 200*time.Millisecond {
 		return chat.Message{}, chat.ErrRate
 	}
-	message = chat.Message{Sequence: session.nextSequence, ID: token(), ClientID: clientID, SenderID: session.participantID, Text: body, CreatedAt: session.now}
-	if _, err := tx.Exec(ctx, `INSERT INTO messages (id, room_id, participant_id, client_message_id, sequence, text, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, message.ID, session.roomID, message.SenderID, message.ClientID, message.Sequence, message.Text, message.CreatedAt); err != nil {
+	message = chat.Message{Sequence: session.nextSequence, ID: token(), ClientID: clientID, SenderID: session.participantID, Ciphertext: body, CreatedAt: session.now}
+	if _, err := tx.Exec(ctx, `INSERT INTO messages (id, room_id, participant_id, client_message_id, sequence, ciphertext, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, message.ID, session.roomID, message.SenderID, message.ClientID, message.Sequence, message.Ciphertext, message.CreatedAt); err != nil {
 		return chat.Message{}, databaseError(ctx, err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE rooms SET message_count = message_count + 1, next_message_sequence = next_message_sequence + 1 WHERE id = $1`, session.roomID); err != nil {
@@ -433,13 +514,6 @@ func (s *Service) Send(ctx context.Context, secret, clientID, body string) (chat
 	}
 	s.hub.Publish(session.roomID, chat.Event{Type: "message", Payload: message})
 	return message, nil
-}
-
-func normalizeSendInput(clientID, body string) (string, error) {
-	if strings.IndexByte(clientID, 0) >= 0 || strings.IndexByte(body, 0) >= 0 {
-		return "", chat.ErrInput
-	}
-	return chat.NormalizeMessage(clientID, body)
 }
 
 // The caller holds the room update lock. Only the transaction that changes an
@@ -501,7 +575,7 @@ func (s *Service) Expire(ctx context.Context) error {
 		}
 	}
 	if _, err := s.pool.Exec(ctx, `DELETE FROM idempotency_requests WHERE expires_at <= clock_timestamp()`); err != nil {
-		return databaseError(ctx, err)
+		return s.expiryError(ctx, err)
 	}
 	return nil
 }
@@ -509,22 +583,22 @@ func (s *Service) Expire(ctx context.Context) error {
 func (s *Service) expireBatch(ctx context.Context) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, databaseError(ctx, err)
+		return 0, s.expiryError(ctx, err)
 	}
 	defer rollback(tx)
 	rows, err := tx.Query(ctx, `SELECT id FROM rooms WHERE status = 'open' AND expires_at <= clock_timestamp() ORDER BY expires_at, id LIMIT 100 FOR UPDATE SKIP LOCKED`)
 	if err != nil {
-		return 0, databaseError(ctx, err)
+		return 0, s.expiryError(ctx, err)
 	}
 	roomIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return 0, databaseError(ctx, err)
+		return 0, s.expiryError(ctx, err)
 	}
 	closed := make([]string, 0, len(roomIDs))
 	for _, roomID := range roomIDs {
 		changed, err := closeRoomTx(ctx, tx, roomID, "expired")
 		if err != nil {
-			return 0, databaseError(ctx, err)
+			return 0, s.expiryError(ctx, err)
 		}
 		if changed {
 			closed = append(closed, roomID)
@@ -533,7 +607,7 @@ func (s *Service) expireBatch(ctx context.Context) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := tx.Commit(ctx); err != nil {
-		return 0, databaseError(ctx, err)
+		return 0, s.expiryError(ctx, err)
 	}
 	for _, roomID := range closed {
 		s.hub.CloseRoom(roomID, chat.Event{Type: "room_expired"})

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"strconv"
@@ -14,11 +15,15 @@ type Config struct {
 	MaxConns         int32
 	OperationTimeout time.Duration
 	ExpiryInterval   time.Duration
+	// MigrateOnStart applies embedded migrations before serving. Off by default:
+	// migrations stay an explicit operator action unless the host has no
+	// pre-deploy step (for example Render's free tier).
+	MigrateOnStart bool
 }
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		Addr:             value(getenv, "ADDR", "127.0.0.1:8080"),
+		Addr:             listenAddr(getenv),
 		MaxConns:         8,
 		OperationTimeout: 5 * time.Second,
 		ExpiryInterval:   time.Second,
@@ -29,9 +34,9 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
 
-	raw, err := hex.DecodeString(getenv("IDEMPOTENCY_ENCRYPTION_KEY"))
-	if err != nil || len(raw) != len(cfg.IdempotencyKey) {
-		return Config{}, errors.New("IDEMPOTENCY_ENCRYPTION_KEY must be 64 hex characters")
+	raw, ok := decodeKey(getenv("IDEMPOTENCY_ENCRYPTION_KEY"))
+	if !ok {
+		return Config{}, errors.New("IDEMPOTENCY_ENCRYPTION_KEY must be 32 bytes as 64 hex characters or base64")
 	}
 	copy(cfg.IdempotencyKey[:], raw)
 
@@ -57,12 +62,37 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.ExpiryInterval = duration
 	}
 
+	switch getenv("MIGRATE_ON_START") {
+	case "", "false", "0":
+	case "true", "1":
+		cfg.MigrateOnStart = true
+	default:
+		return Config{}, errors.New("MIGRATE_ON_START must be true or false")
+	}
+
 	return cfg, nil
 }
 
-func value(getenv func(string) string, key, fallback string) string {
-	if raw := getenv(key); raw != "" {
-		return raw
+// decodeKey accepts 32 bytes as hex (openssl rand -hex 32) or standard base64,
+// which is what Render's generateValue produces.
+func decodeKey(value string) ([]byte, bool) {
+	if raw, err := hex.DecodeString(value); err == nil && len(raw) == 32 {
+		return raw, true
 	}
-	return fallback
+	if raw, err := base64.StdEncoding.DecodeString(value); err == nil && len(raw) == 32 {
+		return raw, true
+	}
+	return nil, false
+}
+
+// listenAddr prefers an explicit ADDR. Platforms such as Render announce the
+// port through PORT and expect the service on all interfaces.
+func listenAddr(getenv func(string) string) string {
+	if addr := getenv("ADDR"); addr != "" {
+		return addr
+	}
+	if port := getenv("PORT"); port != "" {
+		return "0.0.0.0:" + port
+	}
+	return "127.0.0.1:8080"
 }

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nullchat/internal/chat"
+	"nullchat/internal/chat/chattest"
 	"nullchat/internal/httpapi"
 )
 
@@ -49,11 +51,11 @@ func TestCommittedRoomSurvivesServiceRestart(t *testing.T) {
 	firstPool := open()
 	first := New(firstPool, testEncryptionKey)
 	t.Cleanup(first.Close)
-	creator, err := first.Create(ctx, chat.CreateInput{Title: "Restart", TTLMinutes: 30})
+	creator, err := first.Create(ctx, chattest.CreateInput(30))
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := first.Send(ctx, creator.SessionToken, "one", "stored")
+	message, err := first.Send(ctx, creator.SessionToken, "one", chattest.Ciphertext(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +83,7 @@ func TestCommittedRoomSurvivesServiceRestart(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if _, err := second.Join(ctx, chat.JoinInput{InviteToken: creator.InviteToken}); err != nil {
+	if _, err := second.Join(ctx, chattest.JoinInput(creator.InviteToken)); err != nil {
 		t.Fatalf("unconsumed invitation did not survive restart: %v", err)
 	}
 }
@@ -96,6 +98,9 @@ func TestDatabaseFailureIsSanitizedByHTTP(t *testing.T) {
 	service := New(pool, testEncryptionKey)
 	defer service.Close()
 	handler := httpapi.New(service).Handler(http.NotFoundHandler())
+	in := chattest.CreateInput(30)
+	createBody, _ := json.Marshal(map[string]any{"encrypted_title": in.EncryptedTitle, "ttl_minutes": in.TTLMinutes, "key_share": in.KeyShare, "join_verifier": in.JoinVerifier})
+	joinBody, _ := json.Marshal(map[string]any{"invite_token": strings.Repeat("a", 64), "join_proof": chattest.Verifier, "key_share": chattest.Share()})
 	for _, tc := range []struct {
 		method, path, body string
 		status             int
@@ -103,8 +108,8 @@ func TestDatabaseFailureIsSanitizedByHTTP(t *testing.T) {
 	}{
 		{"GET", "/healthz", "", 200, `{"status":"ok"}`},
 		{"GET", "/readyz", "", 503, `{"error":"database_unavailable"}`},
-		{"POST", "/api/v1/rooms", `{}`, 503, `{"error":"database_unavailable"}`},
-		{"POST", "/api/v1/join", `{"invite_token":"` + strings.Repeat("a", 64) + `"}`, 503, `{"error":"database_unavailable"}`},
+		{"POST", "/api/v1/rooms", string(createBody), 503, `{"error":"database_unavailable"}`},
+		{"POST", "/api/v1/join", string(joinBody), 503, `{"error":"database_unavailable"}`},
 		{"POST", "/api/v1/end", "", 503, `{"error":"database_unavailable"}`},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
@@ -195,7 +200,9 @@ func TestServerRestartPreservesCommittedRoom(t *testing.T) {
 
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	baseURL, stop := start(databaseURL, "20ms")
-	request, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/v1/rooms", strings.NewReader(`{"title":"Process restart"}`))
+	in := chattest.CreateInput(30)
+	createBody, _ := json.Marshal(map[string]any{"encrypted_title": in.EncryptedTitle, "ttl_minutes": in.TTLMinutes, "key_share": in.KeyShare, "join_verifier": in.JoinVerifier})
+	request, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/v1/rooms", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +236,8 @@ func TestServerRestartPreservesCommittedRoom(t *testing.T) {
 		return conn, event.Payload
 	}
 	conn, _ := dial(baseURL)
-	if err := wsjson.Write(ctx, conn, map[string]string{"type": "send_message", "client_message_id": "one", "text": "stored"}); err != nil {
+	messageBody := chattest.Ciphertext(1)
+	if err := wsjson.Write(ctx, conn, map[string]string{"type": "send_message", "client_message_id": "one", "ciphertext": messageBody}); err != nil {
 		t.Fatal(err)
 	}
 	var message chat.Message
@@ -246,7 +254,7 @@ func TestServerRestartPreservesCommittedRoom(t *testing.T) {
 		}
 	}
 	var stored string
-	if err := pool.QueryRow(ctx, `SELECT text FROM messages WHERE id = $1`, message.ID).Scan(&stored); err != nil || stored != "stored" {
+	if err := pool.QueryRow(ctx, `SELECT ciphertext FROM messages WHERE id = $1`, message.ID).Scan(&stored); err != nil || stored != messageBody {
 		t.Fatalf("acknowledged message was not committed to PostgreSQL: %v", err)
 	}
 	// Read concurrently so the client completes the server's close handshake.
@@ -295,7 +303,7 @@ func TestServerRestartPreservesCommittedRoom(t *testing.T) {
 	stop()
 
 	// A long interval distinguishes startup recovery from the periodic tick.
-	if _, err := pool.Exec(ctx, `INSERT INTO rooms (id, title, status, expires_at) VALUES ('startup-expired', 'Expired', 'open', clock_timestamp() - interval '1 second')`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO rooms (id, encrypted_title, status, expires_at) VALUES ('startup-expired', 'Expired', 'open', clock_timestamp() - interval '1 second')`); err != nil {
 		t.Fatal(err)
 	}
 	baseURL, stop = start(databaseURL, "1h")

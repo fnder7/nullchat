@@ -13,11 +13,11 @@ func TestApplyMigrationsIsIdempotent(t *testing.T) {
 	}
 
 	var count int
-	if err := pool.QueryRow(testContext, `SELECT count(*) FROM schema_migrations WHERE version IN (1, 2)`).Scan(&count); err != nil {
+	if err := pool.QueryRow(testContext, `SELECT count(*) FROM schema_migrations WHERE version IN (1, 2, 3)`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("version rows = %d, want 2", count)
+	if count != 3 {
+		t.Fatalf("version rows = %d, want 3", count)
 	}
 
 	var indexed bool

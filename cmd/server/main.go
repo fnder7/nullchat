@@ -50,7 +50,17 @@ func run() error {
 	if err != nil {
 		return errors.New("database unavailable at startup")
 	}
-	// Migrations are an explicit operator action performed by cmd/migrate.
+	// Migrations are an explicit operator action performed by cmd/migrate, or
+	// opt-in at startup (MIGRATE_ON_START) for hosts without a pre-deploy step.
+	if cfg.MigrateOnStart {
+		migrateCtx, migrateCancel := context.WithTimeout(ctx, time.Minute)
+		err := postgres.ApplyMigrations(migrateCtx, pool)
+		migrateCancel()
+		if err != nil {
+			return errors.New("apply migrations at startup failed")
+		}
+		slog.Info("database migrations applied")
+	}
 	service := postgres.New(pool, cfg.IdempotencyKey)
 	defer service.Close() // Infrastructure only; never end rooms on shutdown.
 	api := newAPI(service, cfg.OperationTimeout)
@@ -61,7 +71,7 @@ func run() error {
 		operationCtx, cancel := context.WithTimeout(workerCtx, cfg.OperationTimeout)
 		defer cancel()
 		if err := service.Expire(operationCtx); err != nil && workerCtx.Err() == nil {
-			slog.Warn("room expiry failed; will retry")
+			slog.Warn("room expiry failed; will retry", "cause", service.ExpiryFailureCause())
 		}
 	}
 	expire() // Recover expired rooms before serving, then retry on every tick.

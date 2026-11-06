@@ -16,23 +16,28 @@ var generatedNames = []string{
 	"Sable", "Sage", "Solstice", "Stone", "Summit", "Terra", "Willow", "Zephyr",
 }
 
-func NormalizeTitle(title string) (string, error) {
-	title = strings.TrimSpace(title)
-	if strings.IndexByte(title, 0) >= 0 || !utf8.ValidString(title) || utf8.RuneCountInString(title) > 60 {
-		return "", ErrInput
+// ValidateCreate checks the shape of a create request. Title and keys are
+// encrypted or opaque; their content is the browsers' business.
+func ValidateCreate(input CreateInput) error {
+	if input.TTLMinutes < 1 || input.TTLMinutes > 60 || !validTitleBlob(input.EncryptedTitle) || !validKeyShare(input.KeyShare) || !valid32(input.JoinVerifier) {
+		return ErrInput
 	}
-	if title == "" {
-		return "Тихий разговор", nil
-	}
-	return title, nil
+	return nil
 }
 
-func NormalizeMessage(clientID, body string) (string, error) {
-	body = strings.TrimSpace(body)
-	if clientID == "" || !utf8.ValidString(clientID) || len(clientID) > 64 || !utf8.ValidString(body) || body == "" || len(body) > MaxTextBytes {
-		return "", ErrInput
+func ValidateJoin(input JoinInput) error {
+	if !valid32(input.JoinProof) || !validKeyShare(input.KeyShare) {
+		return ErrInput
 	}
-	return body, nil
+	return nil
+}
+
+// ValidateMessage checks a client message ID and an opaque padded ciphertext.
+func ValidateMessage(clientID, ciphertext string) error {
+	if clientID == "" || !utf8.ValidString(clientID) || len(clientID) > 64 || strings.IndexByte(clientID, 0) >= 0 || !validMessageBlob(ciphertext) {
+		return ErrInput
+	}
+	return nil
 }
 
 func GenerateParticipantName(existing []Participant) (string, error) {

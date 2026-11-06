@@ -969,3 +969,62 @@ footer>span:first-child {
     font-size:9px;
   }
 }
+
+.check {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0 0 16px;
+  cursor:pointer;
+}
+
+.check input {
+  width:auto;
+  margin:0;
+  accent-color:var(--accent);
+}
+
+#password,#join-password {
+  margin-bottom:19px;
+}
+
+.safety-panel {
+  margin-top:22px;
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:6px;
+}
+
+.safety-panel strong {
+  display:block;
+  margin:8px 0 6px;
+  font:15px monospace;
+  letter-spacing:.08em;
+  color:var(--accent);
+}
+
+.safety-panel p {
+  margin:0;
+  font-size:10px;
+  line-height:1.7;
+  color:var(--muted);
+}
+
+.safety-panel.broken {
+  border-color:#76504a;
+}
+
+.safety-panel.broken strong {
+  color:var(--error);
+}
+
+.message.undecryptable .bubble {
+  border-style:dashed;
+  color:var(--error);
+}
+
+.message-note {
+  margin:4px 0 0;
+  font-size:10px;
+  color:var(--error);
+}

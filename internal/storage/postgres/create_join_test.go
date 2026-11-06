@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"nullchat/internal/chat"
+	"nullchat/internal/chat/chattest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,11 +43,23 @@ func newCreatedService(t *testing.T) (*Service, chat.Credentials) {
 
 func createRoom(t *testing.T, s *Service, key string) chat.Credentials {
 	t.Helper()
-	c, err := s.Create(testContext, chat.CreateInput{Title: "R", TTLMinutes: 30, IdempotencyKey: key})
+	c, err := s.Create(testContext, createInput(key))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func createInput(key string) chat.CreateInput {
+	in := chattest.CreateInput(30)
+	in.IdempotencyKey = key
+	return in
+}
+
+func joinInput(invite, key string) chat.JoinInput {
+	in := chattest.JoinInput(invite)
+	in.IdempotencyKey = key
+	return in
 }
 
 func assertSameCredentials(t *testing.T, got, want chat.Credentials) {
@@ -72,7 +85,7 @@ func TestJoinConsumesInviteAtomically(t *testing.T) {
 	for range 32 {
 		wg.Go(func() {
 			<-start
-			if _, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken}); err == nil {
+			if _, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken)); err == nil {
 				success.Add(1)
 			} else if !errors.Is(err, chat.ErrUnavailable) {
 				t.Error(err)
@@ -96,28 +109,35 @@ func TestJoinConsumesInviteAtomically(t *testing.T) {
 func TestCreateIdempotencyFingerprintConflict(t *testing.T) {
 	s := newTestService(t)
 	key := strings.Repeat("a", 32)
-	first := createRoom(t, s, key)
-	replay, err := New(s.pool, testEncryptionKey).Create(testContext, chat.CreateInput{Title: " R ", TTLMinutes: 30, IdempotencyKey: key})
+	original := createInput(key)
+	first, err := s.Create(testContext, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A retry must resend the identical encrypted body; it gets the same room.
+	replay, err := New(s.pool, testEncryptionKey).Create(testContext, original)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertSameCredentials(t, replay, first)
-	for _, input := range []chat.CreateInput{
-		{Title: "other", TTLMinutes: 30, IdempotencyKey: key},
-		{Title: "R", TTLMinutes: 31, IdempotencyKey: key},
-	} {
+	otherTitle, otherTTL, otherShare, otherVerifier := original, original, original, original
+	otherTitle.EncryptedTitle = chattest.Blob(chat.TitleBlobBytes)
+	otherTTL.TTLMinutes = 31
+	otherShare.KeyShare = chattest.Share()
+	otherVerifier.JoinVerifier = chattest.Blob(chat.MACBytes)
+	for _, input := range []chat.CreateInput{otherTitle, otherTTL, otherShare, otherVerifier} {
 		if _, err := s.Create(testContext, input); !errors.Is(err, chat.ErrIdempotencyConflict) {
 			t.Fatalf("changed request: %v", err)
 		}
 	}
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: first.InviteToken, IdempotencyKey: key}); !errors.Is(err, chat.ErrIdempotencyConflict) {
+	if _, err := s.Join(testContext, joinInput(first.InviteToken, key)); !errors.Is(err, chat.ErrIdempotencyConflict) {
 		t.Fatalf("changed endpoint: %v", err)
 	}
 }
 
 func TestJoinIdempotencyReplayReturnsTheSameSession(t *testing.T) {
 	s, creator := newCreatedService(t)
-	input := chat.JoinInput{InviteToken: creator.InviteToken, IdempotencyKey: strings.Repeat("b", 32)}
+	input := joinInput(creator.InviteToken, strings.Repeat("b", 32))
 	first, err := s.Join(testContext, input)
 	if err != nil {
 		t.Fatal(err)
@@ -135,14 +155,14 @@ func TestJoinIdempotencyReplayReturnsTheSameSession(t *testing.T) {
 func TestJoinIdempotencyFingerprintConflict(t *testing.T) {
 	s, creator := newCreatedService(t)
 	key := strings.Repeat("c", 32)
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken, IdempotencyKey: key}); err != nil {
+	if _, err := s.Join(testContext, joinInput(creator.InviteToken, key)); err != nil {
 		t.Fatal(err)
 	}
 	other := createRoom(t, s, "")
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: other.InviteToken, IdempotencyKey: key}); !errors.Is(err, chat.ErrIdempotencyConflict) {
+	if _, err := s.Join(testContext, joinInput(other.InviteToken, key)); !errors.Is(err, chat.ErrIdempotencyConflict) {
 		t.Fatal(err)
 	}
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: other.InviteToken}); err != nil {
+	if _, err := s.Join(testContext, chattest.JoinInput(other.InviteToken)); err != nil {
 		t.Fatalf("conflict consumed another invite: %v", err)
 	}
 }
@@ -171,7 +191,7 @@ func waitForAdvisoryWaiter(t *testing.T, pool *pgxpool.Pool, lock int64) {
 
 func TestRoomCapacityUsesAnAdvisoryLock(t *testing.T) {
 	s := newTestService(t)
-	if _, err := s.pool.Exec(testContext, `INSERT INTO rooms (id, title, status, expires_at) SELECT 'seed-' || n, 'R', 'open', now() + interval '30 minutes' FROM generate_series(1, 99) n`); err != nil {
+	if _, err := s.pool.Exec(testContext, `INSERT INTO rooms (id, encrypted_title, status, expires_at) SELECT 'seed-' || n, 'R', 'open', now() + interval '30 minutes' FROM generate_series(1, 99) n`); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := s.pool.Begin(testContext)
@@ -186,13 +206,13 @@ func TestRoomCapacityUsesAnAdvisoryLock(t *testing.T) {
 	defer cancel()
 	results := make(chan error, 32)
 	go func() {
-		_, err := s.Create(ctx, chat.CreateInput{Title: "R", TTLMinutes: 30})
+		_, err := s.Create(ctx, chattest.CreateInput(30))
 		results <- err
 	}()
 	waitForAdvisoryWaiter(t, s.pool, 982463118)
 	for range 31 {
 		go func() {
-			_, err := s.Create(ctx, chat.CreateInput{Title: "R", TTLMinutes: 30})
+			_, err := s.Create(ctx, chattest.CreateInput(30))
 			results <- err
 		}()
 	}
@@ -225,9 +245,9 @@ func TestConcurrentIdempotencyFirstUse(t *testing.T) {
 			defer cancel()
 			request := func() (chat.Credentials, error) {
 				if endpoint == "join" {
-					return s.Join(ctx, chat.JoinInput{InviteToken: invite, IdempotencyKey: key})
+					return s.Join(ctx, joinInput(invite, key))
 				}
-				return s.Create(ctx, chat.CreateInput{Title: "R", TTLMinutes: 30, IdempotencyKey: key})
+				return s.Create(ctx, createInput(key))
 			}
 			tx, err := s.pool.Begin(ctx)
 			if err != nil {
@@ -313,7 +333,7 @@ func TestJoinLocksRoomBeforeInvite(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		c, err := s.Join(ctx, chat.JoinInput{InviteToken: creator.InviteToken})
+		c, err := s.Join(ctx, chattest.JoinInput(creator.InviteToken))
 		done <- result{c, err}
 	}()
 	waitForBlockedTransaction(t, s.pool, tx.Conn().PgConn().PID())
@@ -342,7 +362,7 @@ func TestRoomCapacityRechecksTimeAfterAdvisoryWait(t *testing.T) {
 	s := newTestService(t)
 	ctx, cancel := context.WithTimeout(testContext, 10*time.Second)
 	defer cancel()
-	if _, err := s.pool.Exec(ctx, `INSERT INTO rooms (id, title, status, expires_at) SELECT 'seed-' || n, 'R', 'open', clock_timestamp() + interval '30 minutes' FROM generate_series(1, 100) n`); err != nil {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO rooms (id, encrypted_title, status, expires_at) SELECT 'seed-' || n, 'R', 'open', clock_timestamp() + interval '30 minutes' FROM generate_series(1, 100) n`); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -355,7 +375,7 @@ func TestRoomCapacityRechecksTimeAfterAdvisoryWait(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.Create(ctx, chat.CreateInput{Title: "R", TTLMinutes: 30})
+		_, err := s.Create(ctx, chattest.CreateInput(30))
 		done <- err
 	}()
 	waitForAdvisoryWaiter(t, s.pool, 982463118)
@@ -429,7 +449,7 @@ func TestSubscribeJoinControlledHandoff(t *testing.T) {
 	}
 	joined := make(chan error, 1)
 	go func() {
-		_, err := s.Join(ctx, chat.JoinInput{InviteToken: creator.InviteToken})
+		_, err := s.Join(ctx, chattest.JoinInput(creator.InviteToken))
 		joined <- err
 	}()
 	// Subscribe has read participants but has not registered with the hub yet.
@@ -471,11 +491,11 @@ func TestSubscribeJoinControlledHandoff(t *testing.T) {
 
 func TestInviteDoesNotRevealRoomAfterUse(t *testing.T) {
 	s, creator := newCreatedService(t)
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken}); err != nil {
+	if _, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken)); err != nil {
 		t.Fatal(err)
 	}
 	for _, token := range []string{creator.InviteToken, strings.Repeat("0", 64), "malformed", ""} {
-		got, err := s.Join(testContext, chat.JoinInput{InviteToken: token})
+		got, err := s.Join(testContext, chattest.JoinInput(token))
 		if !errors.Is(err, chat.ErrUnavailable) || !reflect.DeepEqual(got, chat.Credentials{}) {
 			t.Fatalf("unusable invite must return empty credentials and room_unavailable; error = %v", err)
 		}
@@ -552,14 +572,14 @@ func TestIdempotencyReplayUnavailable(t *testing.T) {
 			s := newTestService(t)
 			key := strings.Repeat("f", 32)
 			creator := createRoom(t, s, key)
-			input := chat.JoinInput{InviteToken: creator.InviteToken, IdempotencyKey: strings.Repeat("g", 32)}
+			input := joinInput(creator.InviteToken, strings.Repeat("g", 32))
 			if _, err := s.Join(testContext, input); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.pool.Exec(testContext, change); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Create(testContext, chat.CreateInput{Title: "R", TTLMinutes: 30, IdempotencyKey: key}); !errors.Is(err, chat.ErrUnavailable) {
+			if _, err := s.Create(testContext, createInput(key)); !errors.Is(err, chat.ErrUnavailable) {
 				t.Fatalf("create replay: %v", err)
 			}
 			if _, err := s.Join(testContext, input); !errors.Is(err, chat.ErrUnavailable) {
@@ -577,7 +597,7 @@ func TestExpireDeletesExpiredIdempotencyAndAllowsKeyReuse(t *testing.T) {
 	if _, err := s.pool.Exec(testContext, `UPDATE idempotency_requests SET expires_at = clock_timestamp() - interval '1 second' WHERE room_id = $1`, first.Room.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Create(testContext, chat.CreateInput{Title: "R", TTLMinutes: 30, IdempotencyKey: key}); !errors.Is(err, chat.ErrUnavailable) {
+	if _, err := s.Create(testContext, createInput(key)); !errors.Is(err, chat.ErrUnavailable) {
 		t.Fatalf("expired replay before cleanup = %v, want room_unavailable", err)
 	}
 
@@ -592,7 +612,7 @@ func TestExpireDeletesExpiredIdempotencyAndAllowsKeyReuse(t *testing.T) {
 		t.Fatalf("expired idempotency rows retained = %d, want 0", retained)
 	}
 
-	reused, err := s.Create(testContext, chat.CreateInput{Title: "Reused", TTLMinutes: 30, IdempotencyKey: key})
+	reused, err := s.Create(testContext, createInput(key))
 	if err != nil {
 		t.Fatalf("reuse after cleanup: %v", err)
 	}
@@ -678,7 +698,7 @@ func TestSubscribeSnapshotAndParticipants(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("missing snapshot")
 	}
-	guest, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken})
+	guest, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,11 +758,9 @@ func TestSubscribeRejectsInvalidSessions(t *testing.T) {
 
 func TestCreateValidatesBeforeDatabase(t *testing.T) {
 	s := New(nil, testEncryptionKey)
-	for _, input := range []chat.CreateInput{
-		{Title: strings.Repeat("x", 61), TTLMinutes: 30},
-		{Title: "R", TTLMinutes: 0},
-		{Title: "R", TTLMinutes: 61},
-	} {
+	plaintext, zero, long := chattest.CreateInput(30), chattest.CreateInput(0), chattest.CreateInput(61)
+	plaintext.EncryptedTitle = strings.Repeat("x", 61)
+	for _, input := range []chat.CreateInput{plaintext, zero, long} {
 		if _, err := s.Create(testContext, input); !errors.Is(err, chat.ErrInput) {
 			t.Fatal(err)
 		}
@@ -803,7 +821,7 @@ func TestSubscribeCommitFailureUnsubscribes(t *testing.T) {
 
 func TestCreateCommitFailureRollsBack(t *testing.T) {
 	s := serviceWithCommitCancellation(t, newTestService(t))
-	input := chat.CreateInput{Title: "R", TTLMinutes: 30, IdempotencyKey: strings.Repeat("z", 32)}
+	input := createInput(strings.Repeat("z", 32))
 	got, err := s.Create(cancelAtCommit(t), input)
 	if !errors.Is(err, chat.ErrDatabaseUnavailable) || !reflect.DeepEqual(got, chat.Credentials{}) {
 		t.Fatalf("failed create: %v", err)
@@ -829,7 +847,7 @@ func TestJoinCommitFailureDoesNotConsumeOrPublish(t *testing.T) {
 	}
 	defer unsubscribe()
 	<-events // Initial snapshot.
-	input := chat.JoinInput{InviteToken: creator.InviteToken, IdempotencyKey: strings.Repeat("y", 32)}
+	input := joinInput(creator.InviteToken, strings.Repeat("y", 32))
 	got, err := s.Join(cancelAtCommit(t), input)
 	if !errors.Is(err, chat.ErrDatabaseUnavailable) || !reflect.DeepEqual(got, chat.Credentials{}) {
 		t.Fatalf("failed join: %v", err)
@@ -880,13 +898,79 @@ func TestAdmissionDatabaseErrorsAreSanitized(t *testing.T) {
 	original, creator := newCreatedService(t)
 	s := serviceWithCommitCancellation(t, original)
 	s.pool.Close()
-	if _, err := s.Create(testContext, chat.CreateInput{Title: "R", TTLMinutes: 30}); err != chat.ErrDatabaseUnavailable {
+	if _, err := s.Create(testContext, chattest.CreateInput(30)); err != chat.ErrDatabaseUnavailable {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken}); err != chat.ErrDatabaseUnavailable {
+	if _, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken)); err != chat.ErrDatabaseUnavailable {
 		t.Fatalf("join: %v", err)
 	}
 	if _, _, err := s.Subscribe(testContext, creator.SessionToken); err != chat.ErrDatabaseUnavailable {
 		t.Fatalf("subscribe: %v", err)
+	}
+}
+
+func TestWrongJoinProofIsCommittedWithoutConsumingInvite(t *testing.T) {
+	s, creator := newCreatedService(t)
+	wrong := chattest.JoinInput(creator.InviteToken)
+	wrong.JoinProof = chattest.Blob(chat.MACBytes)
+	for range chat.MaxJoinAttempts - 1 {
+		if _, err := New(s.pool, testEncryptionKey).Join(testContext, wrong); !errors.Is(err, chat.ErrJoinProof) {
+			t.Fatalf("wrong proof: %v", err)
+		}
+	}
+	var failed int
+	if err := s.pool.QueryRow(testContext, `SELECT failed_joins FROM rooms WHERE id = $1`, creator.Room.ID).Scan(&failed); err != nil {
+		t.Fatal(err)
+	}
+	if failed != chat.MaxJoinAttempts-1 {
+		t.Fatalf("failed_joins = %d, want %d", failed, chat.MaxJoinAttempts-1)
+	}
+	guest, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken))
+	if err != nil {
+		t.Fatalf("correct proof after failures: %v", err)
+	}
+	if guest.Self.Role != chat.RoleGuest || guest.Room.Participants[0].Role != chat.RoleCreator || guest.Room.Participants[0].KeyShare != creator.Self.KeyShare {
+		t.Fatal("roles or key shares not persisted")
+	}
+}
+
+func TestJoinProofFailuresRevokeInviteAndNotify(t *testing.T) {
+	s, creator := newCreatedService(t)
+	events, unsubscribe, err := s.Subscribe(testContext, creator.SessionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+	receiveEvent(t, events, "snapshot")
+	wrong := chattest.JoinInput(creator.InviteToken)
+	wrong.JoinProof = chattest.Blob(chat.MACBytes)
+	for range chat.MaxJoinAttempts {
+		if _, err := s.Join(testContext, wrong); !errors.Is(err, chat.ErrJoinProof) {
+			t.Fatalf("wrong proof: %v", err)
+		}
+	}
+	receiveEvent(t, events, "invite_revoked")
+	if _, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken)); !errors.Is(err, chat.ErrUnavailable) {
+		t.Fatalf("revoked invite: %v", err)
+	}
+}
+
+func TestEncryptedFieldsStoredVerbatim(t *testing.T) {
+	s := newTestService(t)
+	input := createInput("")
+	c, err := s.Create(testContext, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var title, publicKey, mac string
+	var verifier []byte
+	if err := s.pool.QueryRow(testContext, `SELECT r.encrypted_title, r.join_verifier_hash, p.public_key, p.key_mac FROM rooms r JOIN participants p ON p.room_id = r.id WHERE r.id = $1`, c.Room.ID).Scan(&title, &verifier, &publicKey, &mac); err != nil {
+		t.Fatal(err)
+	}
+	if title != input.EncryptedTitle || publicKey != input.KeyShare.PublicKey || mac != input.KeyShare.MAC {
+		t.Fatal("encrypted fields altered in storage")
+	}
+	if bytes.Contains(verifier, []byte(input.JoinVerifier)) || len(verifier) != 32 {
+		t.Fatal("join verifier must be stored only as a SHA-256 digest")
 	}
 }

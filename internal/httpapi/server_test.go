@@ -13,9 +13,20 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"nullchat/internal/chat"
+	"nullchat/internal/chat/chattest"
 	"nullchat/internal/storage/memory"
 	"nullchat/web"
 )
+
+func createBody(ttl int) string {
+	in := chattest.CreateInput(ttl)
+	body, _ := json.Marshal(map[string]any{"encrypted_title": in.EncryptedTitle, "ttl_minutes": in.TTLMinutes, "key_share": in.KeyShare, "join_verifier": in.JoinVerifier})
+	return string(body)
+}
+
+func joinBody(invite, proof string) map[string]any {
+	return map[string]any{"invite_token": invite, "join_proof": proof, "key_share": chattest.Share()}
+}
 
 func TestHTTPValidationAndOrigin(t *testing.T) {
 	h := New(memory.New()).Handler(web.Handler())
@@ -23,14 +34,16 @@ func TestHTTPValidationAndOrigin(t *testing.T) {
 		name, path, body, origin string
 		status                   int
 	}{
-		{"create", "/api/v1/rooms", `{}`, "", 201},
-		{"invalid ttl", "/api/v1/rooms", `{"ttl_minutes":0}`, "", 400},
+		{"create", "/api/v1/rooms", createBody(30), "", 201},
+		{"plaintext title rejected", "/api/v1/rooms", `{"title":"x"}`, "", 400},
+		{"missing envelope", "/api/v1/rooms", `{}`, "", 400},
+		{"invalid ttl", "/api/v1/rooms", createBody(0), "", 400},
 		{"unknown field", "/api/v1/rooms", `{"matrix":true}`, "", 400},
-		{"trailing json", "/api/v1/rooms", `{} {}`, "", 400},
-		{"large body", "/api/v1/rooms", `{"title":"` + strings.Repeat("a", 5000) + `"}`, "", 400},
-		{"foreign origin", "/api/v1/rooms", `{}`, "https://evil.example", 403},
-		{"opaque origin", "/api/v1/rooms", `{}`, "null", 403},
-		{"same origin", "/api/v1/rooms", `{}`, "http://example.com", 201},
+		{"trailing json", "/api/v1/rooms", createBody(30) + ` {}`, "", 400},
+		{"large body", "/api/v1/rooms", `{"encrypted_title":"` + strings.Repeat("a", 5000) + `"}`, "", 400},
+		{"foreign origin", "/api/v1/rooms", createBody(30), "https://evil.example", 403},
+		{"opaque origin", "/api/v1/rooms", createBody(30), "null", 403},
+		{"same origin", "/api/v1/rooms", createBody(30), "http://example.com", 201},
 		{"bad invite", "/api/v1/join", `{"invite_token":"x"}`, "", 400},
 		{"missing session", "/api/v1/end", `{}`, "", 401},
 	} {
@@ -49,8 +62,42 @@ func TestHTTPValidationAndOrigin(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "nullchat") {
-		t.Fatal("embedded frontend missing")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "nullchat") || !strings.Contains(w.Body.String(), `type="module"`) {
+		t.Fatal("embedded frontend missing or not loaded as a module")
+	}
+	for _, path := range []string{"/crypto.js", "/keystore.js"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	h := New(memory.New()).Handler(web.Handler())
+	for _, path := range []string{"/", "/app.js", "/healthz", "/api/v1/unknown"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		csp := w.Header().Get("Content-Security-Policy")
+		for _, want := range []string{"script-src 'self'", "require-trusted-types-for 'script'", "trusted-types 'none'", "frame-ancestors 'none'", "object-src 'none'"} {
+			if !strings.Contains(csp, want) {
+				t.Errorf("%s: CSP lacks %q", path, want)
+			}
+		}
+		for header, want := range map[string]string{
+			"Cross-Origin-Opener-Policy":   "same-origin",
+			"Cross-Origin-Resource-Policy": "same-origin",
+			"X-Content-Type-Options":       "nosniff",
+			"Referrer-Policy":              "no-referrer",
+		} {
+			if got := w.Header().Get(header); got != want {
+				t.Errorf("%s: %s = %q, want %q", path, header, got, want)
+			}
+		}
+		if !strings.Contains(w.Header().Get("Permissions-Policy"), "camera=()") {
+			t.Errorf("%s: Permissions-Policy missing", path)
+		}
 	}
 }
 
@@ -177,7 +224,7 @@ func TestWebSocketCommandsReceiveFiniteOperationDeadline(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("Subscribe did not start")
 	}
-	if err := wsjson.Write(ctx, conn, command{Type: "send_message", ClientID: "one", Text: "hello"}); err != nil {
+	if err := wsjson.Write(ctx, conn, command{Type: "send_message", ClientID: "one", Ciphertext: chattest.Ciphertext(1)}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -487,7 +534,7 @@ func TestIdempotencyKeyForwardingAndValidation(t *testing.T) {
 	app := &spyApplication{}
 	h := New(app).Handler(web.Handler())
 
-	create := httptest.NewRequest(http.MethodPost, "/api/v1/rooms", strings.NewReader(`{"title":"R"}`))
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/rooms", strings.NewReader(`{}`))
 	create.Header.Set("Idempotency-Key", key)
 	createResponse := httptest.NewRecorder()
 	h.ServeHTTP(createResponse, create)
@@ -577,8 +624,18 @@ func TestWebSocketRoundTripReconnectAndRevocation(t *testing.T) {
 		}
 		return c
 	}
-	creator := post("/api/v1/rooms", map[string]any{"title": "Integration", "ttl_minutes": 30})
-	guest := post("/api/v1/join", map[string]string{"invite_token": creator.InviteToken})
+	creator := post("/api/v1/rooms", json.RawMessage(createBody(30)))
+	wrongBody, _ := json.Marshal(joinBody(creator.InviteToken, chattest.Blob(chat.MACBytes)))
+	wrong, err := http.Post(server.URL+"/api/v1/join", "application/json", bytes.NewReader(wrongBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.Body.Close()
+	if wrong.StatusCode != http.StatusForbidden {
+		t.Fatalf("wrong proof status %d, want 403", wrong.StatusCode)
+	}
+	// The failed proof did not consume the seat.
+	guest := post("/api/v1/join", joinBody(creator.InviteToken, chattest.Verifier))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	dial := func(token string) *websocket.Conn {
@@ -611,7 +668,8 @@ func TestWebSocketRoundTripReconnectAndRevocation(t *testing.T) {
 	a, b := dial(creator.SessionToken), dial(guest.SessionToken)
 	read(a, "snapshot")
 	read(b, "snapshot")
-	cmd := command{Type: "send_message", ClientID: "stable-id", Text: "Hello <script>alert(1)</script>"}
+	body := chattest.Ciphertext(1)
+	cmd := command{Type: "send_message", ClientID: "stable-id", Ciphertext: body}
 	if err := wsjson.Write(ctx, a, cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +677,7 @@ func TestWebSocketRoundTripReconnectAndRevocation(t *testing.T) {
 	if err := json.Unmarshal(read(b, "message"), &received); err != nil {
 		t.Fatal(err)
 	}
-	if received.Text != cmd.Text || received.Sequence != 1 {
+	if received.Ciphertext != body || received.Sequence != 1 {
 		t.Fatal("message corrupted")
 	}
 	// ack and broadcast can arrive in either order; they refer to the same message.

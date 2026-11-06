@@ -20,34 +20,44 @@ var (
 	ErrConflict            = errors.New("message_id_conflict")
 	ErrIdempotencyConflict = errors.New("idempotency_key_conflict")
 	ErrDatabaseUnavailable = errors.New("database_unavailable")
+	ErrJoinProof           = errors.New("join_proof_invalid")
 )
 
 const (
-	MaxRooms     = 100
-	MaxMessages  = 500
-	MaxTextBytes = 4000
+	MaxRooms        = 100
+	MaxMessages     = 500
+	MaxJoinAttempts = 5
+)
+
+// Roles are assigned by the server and bound into each key share's MAC.
+const (
+	RoleCreator = "creator"
+	RoleGuest   = "guest"
 )
 
 type Participant struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Role     string   `json:"role"`
+	KeyShare KeyShare `json:"key_share"`
 }
 
 type Message struct {
-	Sequence  int       `json:"sequence"`
-	ID        string    `json:"id"`
-	ClientID  string    `json:"client_message_id"`
-	SenderID  string    `json:"sender_id"`
-	Text      string    `json:"text"`
-	CreatedAt time.Time `json:"created_at"`
+	Sequence int    `json:"sequence"`
+	ID       string `json:"id"`
+	ClientID string `json:"client_message_id"`
+	SenderID string `json:"sender_id"`
+	// Ciphertext is opaque to the server: end-to-end encrypted by the browsers.
+	Ciphertext string    `json:"ciphertext"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Snapshot struct {
-	ID           string        `json:"id"`
-	Title        string        `json:"title"`
-	ExpiresAt    time.Time     `json:"expires_at"`
-	Participants []Participant `json:"participants"`
-	Messages     []Message     `json:"messages"`
+	ID             string        `json:"id"`
+	EncryptedTitle string        `json:"encrypted_title"`
+	ExpiresAt      time.Time     `json:"expires_at"`
+	Participants   []Participant `json:"participants"`
+	Messages       []Message     `json:"messages"`
 }
 
 type Credentials struct {
@@ -57,14 +67,19 @@ type Credentials struct {
 	InviteToken  string      `json:"invite_token,omitempty"`
 }
 
+// CreateInput carries only opaque, client-encrypted material plus the TTL.
 type CreateInput struct {
-	Title          string
+	EncryptedTitle string
 	TTLMinutes     int
+	KeyShare       KeyShare
+	JoinVerifier   string
 	IdempotencyKey string
 }
 
 type JoinInput struct {
 	InviteToken    string
+	JoinProof      string
+	KeyShare       KeyShare
 	IdempotencyKey string
 }
 
@@ -82,6 +97,7 @@ type Application interface {
 	Create(context.Context, CreateInput) (Credentials, error)
 	Join(context.Context, JoinInput) (Credentials, error)
 	Subscribe(context.Context, string) (<-chan Event, func(), error)
+	// Send takes a session token, client message ID and opaque ciphertext.
 	Send(context.Context, string, string, string) (Message, error)
 	End(context.Context, string) error
 	Ready(context.Context) error

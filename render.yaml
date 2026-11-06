@@ -1,0 +1,40 @@
+# Render Blueprint: one web service (Docker) and one PostgreSQL database.
+# Free tier: the service sleeps after ~15 minutes without traffic (WebSockets
+# drop and clients reconnect), and a free database expires after 30 days.
+services:
+  - type: web
+    name: nullchat
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    # /readyz pings PostgreSQL; /healthz alone would pass without a database.
+    healthCheckPath: /readyz
+    # The realtime hub lives in process memory: never run more than one
+    # instance, or participants on different instances miss each other's events.
+    numInstances: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nullchat-db
+          property: connectionString
+      # Encrypts idempotent replay responses. Generated once by Render and kept
+      # across deploys; rotating it only invalidates pending create/join replays.
+      - key: IDEMPOTENCY_ENCRYPTION_KEY
+        generateValue: true
+      # Free web services have no pre-deploy step, so the server applies the
+      # embedded migrations itself before serving.
+      - key: MIGRATE_ON_START
+        value: "true"
+      # The image listens on 0.0.0.0:8080 (ADDR in the Dockerfile).
+      - key: PORT
+        value: "8080"
+
+databases:
+  - name: nullchat-db
+    plan: free
+    region: frankfurt
+    databaseName: nullchat
+    user: nullchat
+    # No external connections: only services in this Render account.
+    ipAllowList: []

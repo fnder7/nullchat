@@ -100,7 +100,11 @@ func (s *Server) Handler(frontend http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		// Trusted Types with no policies: string-to-HTML/script sinks are blocked outright.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()")
 		if !sameOrigin(r) {
 			respond(w, 403, map[string]string{"error": "origin_forbidden"})
 			return
@@ -135,6 +139,8 @@ func fail(w http.ResponseWriter, err error) {
 		status = http.StatusTooManyRequests
 	case errors.Is(err, chat.ErrConflict), errors.Is(err, chat.ErrIdempotencyConflict):
 		status = http.StatusConflict
+	case errors.Is(err, chat.ErrJoinProof):
+		status = http.StatusForbidden
 	case errors.Is(err, chat.ErrDatabaseUnavailable):
 		status = http.StatusServiceUnavailable
 	}
@@ -197,8 +203,10 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := struct {
-		Title string `json:"title"`
-		TTL   int    `json:"ttl_minutes"`
+		EncryptedTitle string        `json:"encrypted_title"`
+		TTL            int           `json:"ttl_minutes"`
+		KeyShare       chat.KeyShare `json:"key_share"`
+		JoinVerifier   string        `json:"join_verifier"`
 	}{TTL: 30}
 	if !decode(w, r, &input) {
 		return
@@ -210,7 +218,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	operationCtx, cancel := s.operationContext(r.Context())
 	defer cancel()
-	c, err := s.chat.Create(operationCtx, chat.CreateInput{Title: input.Title, TTLMinutes: input.TTL, IdempotencyKey: key})
+	c, err := s.chat.Create(operationCtx, chat.CreateInput{EncryptedTitle: input.EncryptedTitle, TTLMinutes: input.TTL, KeyShare: input.KeyShare, JoinVerifier: input.JoinVerifier, IdempotencyKey: key})
 	err = operationError(r.Context(), err)
 	if err != nil {
 		fail(w, err)
@@ -224,7 +232,9 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Invite string `json:"invite_token"`
+		Invite    string        `json:"invite_token"`
+		JoinProof string        `json:"join_proof"`
+		KeyShare  chat.KeyShare `json:"key_share"`
 	}
 	if !decode(w, r, &input) {
 		return
@@ -240,7 +250,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	}
 	operationCtx, cancel := s.operationContext(r.Context())
 	defer cancel()
-	c, err := s.chat.Join(operationCtx, chat.JoinInput{InviteToken: input.Invite, IdempotencyKey: key})
+	c, err := s.chat.Join(operationCtx, chat.JoinInput{InviteToken: input.Invite, JoinProof: input.JoinProof, KeyShare: input.KeyShare, IdempotencyKey: key})
 	err = operationError(r.Context(), err)
 	if err != nil {
 		fail(w, err)
@@ -268,7 +278,7 @@ type command struct {
 	Type         string `json:"type"`
 	SessionToken string `json:"session_token,omitempty"`
 	ClientID     string `json:"client_message_id,omitempty"`
-	Text         string `json:"text,omitempty"`
+	Ciphertext   string `json:"ciphertext,omitempty"`
 }
 
 func write(ctx context.Context, c *websocket.Conn, event chat.Event) error {
@@ -371,7 +381,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			operationCtx, operationCancel := s.operationContext(ctx)
-			m, err := s.chat.Send(operationCtx, auth.SessionToken, cmd.ClientID, cmd.Text)
+			m, err := s.chat.Send(operationCtx, auth.SessionToken, cmd.ClientID, cmd.Ciphertext)
 			err = operationError(ctx, err)
 			operationCancel()
 			event := chat.Event{Type: "ack", Payload: m}

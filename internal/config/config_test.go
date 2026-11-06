@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +81,52 @@ func TestLoadDoesNotExposeSecretsInErrors(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secretURL) || strings.Contains(err.Error(), secretKey) || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("error exposed a secret: %v", err)
+	}
+}
+
+func TestLoadPortAndStartupMigrations(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL":               "postgres://localhost/nullchat",
+		"IDEMPOTENCY_ENCRYPTION_KEY": strings.Repeat("00", 32),
+		"PORT":                       "10000",
+		"MIGRATE_ON_START":           "true",
+	}
+	getenv := func(key string) string { return env[key] }
+	cfg, err := Load(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Addr != "0.0.0.0:10000" || !cfg.MigrateOnStart {
+		t.Fatalf("config = %+v", cfg)
+	}
+	env["ADDR"] = "127.0.0.1:9000"
+	if cfg, _ := Load(getenv); cfg.Addr != "127.0.0.1:9000" {
+		t.Fatalf("explicit ADDR lost to PORT: %q", cfg.Addr)
+	}
+	delete(env, "MIGRATE_ON_START")
+	if cfg, _ := Load(getenv); cfg.MigrateOnStart {
+		t.Fatal("startup migrations must be opt-in")
+	}
+	env["MIGRATE_ON_START"] = "yes"
+	if _, err := Load(getenv); err == nil {
+		t.Fatal("accepted an ambiguous MIGRATE_ON_START")
+	}
+}
+
+func TestLoadAcceptsBase64Key(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL":               "postgres://localhost/nullchat",
+		"IDEMPOTENCY_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))),
+	}
+	cfg, err := Load(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(cfg.IdempotencyKey[:]) != strings.Repeat("k", 32) {
+		t.Fatal("base64 key decoded incorrectly")
+	}
+	env["IDEMPOTENCY_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString([]byte("short"))
+	if _, err := Load(func(key string) string { return env[key] }); err == nil {
+		t.Fatal("accepted a short base64 key")
 	}
 }

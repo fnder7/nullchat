@@ -83,11 +83,17 @@ func TestFrontendSuccessfulManualRetryClearsStaleError(t *testing.T) {
 		t.Fatal("could not locate manual retry handler boundaries")
 	}
 	handler := text[start:end]
-	if !strings.Contains(handler, "const sent = transmit(entry);") {
-		t.Fatal("manual retry handler does not capture the transmit result")
+	// A retried message is resealed with a fresh ID and counter (a failed send
+	// was never stored) and goes through the ordered send queue.
+	for _, required := range []string{"entry.client_message_id = crypto.randomUUID();", "entry.ciphertext = '';", "showError('chat-error');", "enqueue(entry);"} {
+		if !strings.Contains(handler, required) {
+			t.Errorf("manual retry handler lacks %q", required)
+		}
 	}
-	if !strings.Contains(handler, "if (sent) showError('chat-error');") {
-		t.Fatal("manual retry handler does not clear stale error only after a successful send")
+	queue := text[strings.Index(text, "function enqueue("):]
+	queue = queue[:strings.Index(queue, "\nfunction ")]
+	if !strings.Contains(queue, "if (transmit(entry, socket))") || !strings.Contains(queue, "else showError('chat-error', 'Сообщение не отправлено. Нажми «Повторить».');") {
+		t.Fatal("send queue does not surface failed transmissions")
 	}
 }
 
@@ -97,8 +103,11 @@ func TestFrontendCopyMatchesPersistenceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "История доступна участникам до закрытия комнаты. Без E2EE.") {
-		t.Fatal("footer does not describe PostgreSQL persistence contract")
+	if !strings.Contains(text, "История доступна участникам до закрытия комнаты. Сквозное шифрование: сервер видит только шифротекст.") {
+		t.Fatal("footer does not describe the persistence and encryption contract")
+	}
+	if strings.Contains(text, "Без E2EE") {
+		t.Fatal("footer still claims there is no end-to-end encryption")
 	}
 	if strings.Contains(text, "история хранится в памяти") {
 		t.Fatal("footer still describes in-memory history")
@@ -114,8 +123,8 @@ func TestFrontendUsesOperationSpecificErrors(t *testing.T) {
 	for _, required := range []string{
 		"async function api(path, data, token, key = '', errorOverrides = {})",
 		"errorOverrides[result.error] || errors[result.error] || 'Не удалось выполнить запрос. Попробуй ещё раз.'",
-		"api('/api/v1/rooms', { title: $('title').value, ttl_minutes: Number($('ttl').value) }, '', retryKey('create'), { database_unavailable: 'Сервер временно недоступен. Комната не создана — попробуй ещё раз.' })",
-		"api('/api/v1/join', { invite_token: new URLSearchParams(location.hash.slice(1)).get('invite') }, '', retryKey('join'), { invalid_input: 'Приглашение недействительно. Проверь ссылку или попроси новую.' })",
+		"api('/api/v1/rooms', request.body, '', request.key, { database_unavailable: 'Сервер временно недоступен. Комната не создана — попробуй ещё раз.' })",
+		"api('/api/v1/join', request.body, '', request.key, { invalid_input: 'Приглашение недействительно. Проверь ссылку или попроси новую.' })",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("frontend lacks operation-specific error contract: %q", required)
@@ -134,5 +143,25 @@ func TestFrontendRoomURLWithoutSessionUsesNeutralCopy(t *testing.T) {
 	}
 	if strings.Contains(text, "В этой вкладке нет сессии комнаты") {
 		t.Fatal("room URL still exposes missing sessionStorage as the recovery copy")
+	}
+}
+
+// Retrying create/join with the same Idempotency-Key must resend the identical
+// encrypted body; re-encrypting would conflict or replay keys the tab lacks.
+func TestFrontendReusesPreparedIdempotentRequests(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"if (prepared.create) return prepared.create;",
+		"if (prepared.join) return prepared.join;",
+		"for (const id of ['title', 'ttl', 'password']) $(id).addEventListener('input', () => { prepared.create = null; });",
+		"$('join-password').addEventListener('input', () => { prepared.join = null; });",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("frontend lacks prepared-request contract: %q", required)
+		}
 	}
 }

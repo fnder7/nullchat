@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"sync"
 	"time"
@@ -14,9 +15,11 @@ import (
 )
 
 type room struct {
-	id, title    string
+	id, encTitle string
 	expiresAt    time.Time
 	invite       [32]byte
+	verifier     [32]byte // SHA-256 of the join verifier; the server cannot derive it
+	failedJoins  int
 	participants []chat.Participant
 	messages     []chat.Message
 	sessions     map[[32]byte]*session
@@ -67,9 +70,8 @@ func (s *Service) Create(ctx context.Context, input chat.CreateInput) (chat.Cred
 	if err := ctx.Err(); err != nil {
 		return chat.Credentials{}, err
 	}
-	title, err := chat.NormalizeTitle(input.Title)
-	if err != nil || input.TTLMinutes < 1 || input.TTLMinutes > 60 {
-		return chat.Credentials{}, chat.ErrInput
+	if err := chat.ValidateCreate(input); err != nil {
+		return chat.Credentials{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,8 +80,8 @@ func (s *Service) Create(ctx context.Context, input chat.CreateInput) (chat.Cred
 		return chat.Credentials{}, chat.ErrCapacity
 	}
 	invite := token()
-	r := &room{id: token()[:24], title: title, expiresAt: s.now().Add(time.Duration(input.TTLMinutes) * time.Minute), invite: digest(invite), sessions: make(map[[32]byte]*session), messages: []chat.Message{}}
-	credential, err := s.addSession(r)
+	r := &room{id: token()[:24], encTitle: input.EncryptedTitle, expiresAt: s.now().Add(time.Duration(input.TTLMinutes) * time.Minute), invite: digest(invite), verifier: digest(input.JoinVerifier), sessions: make(map[[32]byte]*session), messages: []chat.Message{}}
+	credential, err := s.addSession(r, chat.RoleCreator, input.KeyShare)
 	if err != nil {
 		return chat.Credentials{}, err
 	}
@@ -89,13 +91,13 @@ func (s *Service) Create(ctx context.Context, input chat.CreateInput) (chat.Cred
 	return credential, nil
 }
 
-func (s *Service) addSession(r *room) (chat.Credentials, error) {
+func (s *Service) addSession(r *room, role string, share chat.KeyShare) (chat.Credentials, error) {
 	t := token()
 	name, err := chat.GenerateParticipantName(r.participants)
 	if err != nil {
 		return chat.Credentials{}, err
 	}
-	p := chat.Participant{ID: token()[:24], Name: name}
+	p := chat.Participant{ID: token()[:24], Name: name, Role: role, KeyShare: share}
 	ss := &session{room: r, self: p}
 	r.participants = append(r.participants, p)
 	r.sessions[digest(t)] = ss
@@ -110,6 +112,9 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	if err := ctx.Err(); err != nil {
 		return chat.Credentials{}, err
 	}
+	if err := chat.ValidateJoin(input); err != nil {
+		return chat.Credentials{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked()
@@ -117,7 +122,17 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 	if r == nil || s.closed {
 		return chat.Credentials{}, chat.ErrUnavailable
 	}
-	c, err := s.addSession(r)
+	proof := digest(input.JoinProof)
+	if subtle.ConstantTimeCompare(proof[:], r.verifier[:]) != 1 {
+		// A wrong proof (password) must not consume the seat, but online guessing is bounded.
+		r.failedJoins++
+		if r.failedJoins >= chat.MaxJoinAttempts {
+			delete(s.invites, r.invite)
+			s.broadcast(r, realtime.Event{Type: "invite_revoked", Payload: struct{}{}})
+		}
+		return chat.Credentials{}, chat.ErrJoinProof
+	}
+	c, err := s.addSession(r, chat.RoleGuest, input.KeyShare)
 	if err != nil {
 		return chat.Credentials{}, err
 	}
@@ -127,7 +142,7 @@ func (s *Service) Join(ctx context.Context, input chat.JoinInput) (chat.Credenti
 }
 
 func (r *room) snapshot() chat.Snapshot {
-	return chat.Snapshot{ID: r.id, Title: r.title, ExpiresAt: r.expiresAt, Participants: append([]chat.Participant{}, r.participants...), Messages: append([]chat.Message{}, r.messages...)}
+	return chat.Snapshot{ID: r.id, EncryptedTitle: r.encTitle, ExpiresAt: r.expiresAt, Participants: append([]chat.Participant{}, r.participants...), Messages: append([]chat.Message{}, r.messages...)}
 }
 
 // Subscribe atomically captures history and registers the event stream so that
@@ -169,8 +184,7 @@ func (s *Service) Send(ctx context.Context, t, clientID, body string) (chat.Mess
 	if err := ctx.Err(); err != nil {
 		return chat.Message{}, err
 	}
-	body, err := chat.NormalizeMessage(clientID, body)
-	if err != nil {
+	if err := chat.ValidateMessage(clientID, body); err != nil {
 		return chat.Message{}, err
 	}
 	s.mu.Lock()
@@ -183,7 +197,7 @@ func (s *Service) Send(ctx context.Context, t, clientID, body string) (chat.Mess
 	r := ss.room
 	for _, m := range r.messages {
 		if m.SenderID == ss.self.ID && m.ClientID == clientID {
-			if m.Text != body {
+			if m.Ciphertext != body {
 				return chat.Message{}, chat.ErrConflict
 			}
 			return m, nil
@@ -197,7 +211,7 @@ func (s *Service) Send(ctx context.Context, t, clientID, body string) (chat.Mess
 		return chat.Message{}, chat.ErrRate
 	}
 	ss.lastSend = now
-	m := chat.Message{Sequence: len(r.messages) + 1, ID: token()[:24], ClientID: clientID, SenderID: ss.self.ID, Text: body, CreatedAt: now}
+	m := chat.Message{Sequence: len(r.messages) + 1, ID: token()[:24], ClientID: clientID, SenderID: ss.self.ID, Ciphertext: body, CreatedAt: now}
 	r.messages = append(r.messages, m)
 	s.broadcast(r, realtime.Event{Type: "message", Payload: m})
 	return m, nil

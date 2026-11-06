@@ -10,10 +10,14 @@ import (
 	"time"
 
 	"nullchat/internal/chat"
+	"nullchat/internal/chat/chattest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// hello is a well-formed opaque message body shared by send tests.
+var hello = chattest.Ciphertext(1)
 
 func receiveEvent(t *testing.T, events <-chan chat.Event, want string) chat.Event {
 	t.Helper()
@@ -52,11 +56,11 @@ func noEvent(t *testing.T, events <-chan chat.Event) {
 func TestDuplicateMessageIsStoredOnce(t *testing.T) {
 	s, creator := newCreatedService(t)
 	events := subscribeRoom(t, s, creator.SessionToken)
-	first, err := s.Send(testContext, creator.SessionToken, "stable-id", " hello ")
+	first, err := s.Send(testContext, creator.SessionToken, "stable-id", hello)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Sequence != 1 || first.Text != "hello" || first.SenderID != creator.Self.ID || first.ClientID != "stable-id" || !validToken(first.ID) || first.CreatedAt.IsZero() {
+	if first.Sequence != 1 || first.Ciphertext != hello || first.SenderID != creator.Self.ID || first.ClientID != "stable-id" || !validToken(first.ID) || first.CreatedAt.IsZero() {
 		t.Fatalf("message = %+v", first)
 	}
 	if got := receiveEvent(t, events, "message").Payload.(chat.Message); !reflect.DeepEqual(got, first) {
@@ -67,7 +71,7 @@ func TestDuplicateMessageIsStoredOnce(t *testing.T) {
 	results := make(chan error, 24)
 	for range 24 {
 		go func() {
-			again, err := s.Send(testContext, creator.SessionToken, "stable-id", "hello")
+			again, err := s.Send(testContext, creator.SessionToken, "stable-id", hello)
 			if err == nil && !reflect.DeepEqual(again, first) {
 				err = fmt.Errorf("retry differs: %+v", again)
 			}
@@ -79,7 +83,7 @@ func TestDuplicateMessageIsStoredOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.Send(testContext, creator.SessionToken, "stable-id", "changed"); !errors.Is(err, chat.ErrConflict) {
+	if _, err := s.Send(testContext, creator.SessionToken, "stable-id", chattest.Ciphertext(1)); !errors.Is(err, chat.ErrConflict) {
 		t.Fatal(err)
 	}
 	var rows, count, next int
@@ -98,7 +102,7 @@ func TestSubscribeAndSendHaveNoGap(t *testing.T) {
 		creator := createRoom(t, s, "")
 		done := make(chan error, 1)
 		go func() {
-			_, err := s.Send(testContext, creator.SessionToken, "one", "race")
+			_, err := s.Send(testContext, creator.SessionToken, "one", hello)
 			done <- err
 		}()
 		events, cancel, err := s.Subscribe(testContext, creator.SessionToken)
@@ -195,7 +199,7 @@ func TestSubscribeSendControlledHandoff(t *testing.T) {
 				events, cancel, err := s.Subscribe(ctx, creator.SessionToken)
 				subscribed <- subscription{events, cancel, err}
 			}
-			send := func(ctx context.Context) { _, err := s.Send(ctx, creator.SessionToken, "one", "boundary"); sent <- err }
+			send := func(ctx context.Context) { _, err := s.Send(ctx, creator.SessionToken, "one", hello); sent <- err }
 			gated := context.WithValue(ctx, operationGateKey{}, gate)
 			if writerFirst {
 				go send(gated)
@@ -234,14 +238,14 @@ func TestSubscribeSendControlledHandoff(t *testing.T) {
 			}
 			snapshot := receiveEvent(t, sub.events, "snapshot").Payload.(chat.SnapshotEvent)
 			if writerFirst {
-				if len(snapshot.Room.Messages) != 1 || snapshot.Room.Messages[0].Text != "boundary" {
+				if len(snapshot.Room.Messages) != 1 || snapshot.Room.Messages[0].Ciphertext != hello {
 					t.Fatalf("snapshot = %+v", snapshot.Room.Messages)
 				}
 			} else {
 				if len(snapshot.Room.Messages) != 0 {
 					t.Fatal("snapshot includes blocked send")
 				}
-				if message := receiveEvent(t, sub.events, "message").Payload.(chat.Message); message.Sequence != 1 || message.Text != "boundary" {
+				if message := receiveEvent(t, sub.events, "message").Payload.(chat.Message); message.Sequence != 1 || message.Ciphertext != hello {
 					t.Fatalf("message = %+v", message)
 				}
 			}
@@ -270,7 +274,7 @@ func TestSendRechecksExpiryAfterRoomLock(t *testing.T) {
 					done <- s.End(ctx, creator.SessionToken)
 					return
 				}
-				_, err := s.Send(ctx, creator.SessionToken, "late", "late")
+				_, err := s.Send(ctx, creator.SessionToken, "late", hello)
 				done <- err
 			}()
 			waitForBlockedTransaction(t, s.pool, tx.Conn().PgConn().PID())
@@ -299,26 +303,26 @@ func TestSendRechecksExpiryAfterRoomLock(t *testing.T) {
 
 func TestSendLimitsAndRate(t *testing.T) {
 	s, creator := newCreatedService(t)
-	for _, input := range [][2]string{{"", "hello"}, {"id", "  "}, {strings.Repeat("i", 65), "hello"}, {"id", strings.Repeat("я", 2001)}, {"id", "\xff"}} {
+	for _, input := range [][2]string{{"", hello}, {"id", "  "}, {strings.Repeat("i", 65), hello}, {"id", chattest.Ciphertext(17)}, {"id", "\xff"}} {
 		if _, err := s.Send(testContext, creator.SessionToken, input[0], input[1]); !errors.Is(err, chat.ErrInput) {
 			t.Fatalf("invalid message: %v", err)
 		}
 	}
-	first, err := s.Send(testContext, creator.SessionToken, "first", strings.Repeat("я", 2000))
+	first, err := s.Send(testContext, creator.SessionToken, "first", chattest.Ciphertext(16))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Send(testContext, creator.SessionToken, "fast", "fast"); !errors.Is(err, chat.ErrRate) {
+	if _, err := s.Send(testContext, creator.SessionToken, "fast", hello); !errors.Is(err, chat.ErrRate) {
 		t.Fatalf("rate: %v", err)
 	}
 	if _, err := s.pool.Exec(testContext, `UPDATE sessions SET last_send_at = clock_timestamp() - interval '200 milliseconds' WHERE room_id = $1`, creator.Room.ID); err != nil {
 		t.Fatal(err)
 	}
-	if message, err := s.Send(testContext, creator.SessionToken, "second", "second"); err != nil || message.Sequence != 2 {
+	if message, err := s.Send(testContext, creator.SessionToken, "second", hello); err != nil || message.Sequence != 2 {
 		t.Fatalf("after interval: %+v, %v", message, err)
 	}
 	// Seed committed history to the last available slot without sleeping 100s.
-	if _, err := s.pool.Exec(testContext, `INSERT INTO messages (id, room_id, participant_id, client_message_id, sequence, text, created_at) SELECT 'seed-' || n, $1, $2, 'seed-' || n, n, 'seed', clock_timestamp() FROM generate_series(3, 499) n`, creator.Room.ID, creator.Self.ID); err != nil {
+	if _, err := s.pool.Exec(testContext, `INSERT INTO messages (id, room_id, participant_id, client_message_id, sequence, ciphertext, created_at) SELECT 'seed-' || n, $1, $2, 'seed-' || n, n, 'seed', clock_timestamp() FROM generate_series(3, 499) n`, creator.Room.ID, creator.Self.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.pool.Exec(testContext, `UPDATE rooms SET message_count = 499, next_message_sequence = 500 WHERE id = $1`, creator.Room.ID); err != nil {
@@ -327,13 +331,13 @@ func TestSendLimitsAndRate(t *testing.T) {
 	if _, err := s.pool.Exec(testContext, `UPDATE sessions SET last_send_at = NULL WHERE room_id = $1`, creator.Room.ID); err != nil {
 		t.Fatal(err)
 	}
-	if message, err := s.Send(testContext, creator.SessionToken, "last", "last"); err != nil || message.Sequence != 500 {
+	if message, err := s.Send(testContext, creator.SessionToken, "last", hello); err != nil || message.Sequence != 500 {
 		t.Fatalf("last slot: %+v, %v", message, err)
 	}
-	if _, err := s.Send(testContext, creator.SessionToken, "overflow", "overflow"); !errors.Is(err, chat.ErrMessageLimit) {
+	if _, err := s.Send(testContext, creator.SessionToken, "overflow", hello); !errors.Is(err, chat.ErrMessageLimit) {
 		t.Fatalf("limit: %v", err)
 	}
-	if again, err := s.Send(testContext, creator.SessionToken, "first", first.Text); err != nil || again.ID != first.ID {
+	if again, err := s.Send(testContext, creator.SessionToken, "first", first.Ciphertext); err != nil || again.ID != first.ID {
 		t.Fatalf("retry at limit: %+v, %v", again, err)
 	}
 	var rows, count, next int
@@ -348,7 +352,7 @@ func TestSendLimitsAndRate(t *testing.T) {
 func TestSendRejectsNULInputBeforeDatabaseAccess(t *testing.T) {
 	s := &Service{}
 	for name, input := range map[string][2]string{
-		"client id": {"bad\x00id", "hello"},
+		"client id": {"bad\x00id", hello},
 		"message":   {"client", "hello\x00world"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -390,7 +394,7 @@ func TestConcurrentSendSequences(t *testing.T) {
 		for _, secret := range []string{creator.SessionToken, guest.SessionToken} {
 			go func() {
 				<-start
-				_, err := s.Send(testContext, secret, fmt.Sprint(round), "concurrent")
+				_, err := s.Send(testContext, secret, fmt.Sprint(round), hello)
 				results <- err
 			}()
 		}
@@ -437,7 +441,7 @@ FROM rooms WHERE id = $1`, creator.Room.ID).Scan(&got, &closed, &revoked, &consu
 		t.Fatalf("terminal state = %s/%v/%v/%v", got, closed, revoked, consumed)
 	}
 	for _, secret := range []string{creator.SessionToken, guest.SessionToken} {
-		if _, err := s.Send(testContext, secret, "one", "hello"); !errors.Is(err, chat.ErrSession) {
+		if _, err := s.Send(testContext, secret, "one", hello); !errors.Is(err, chat.ErrSession) {
 			t.Fatalf("send after terminal: %v", err)
 		}
 		if err := s.End(testContext, secret); !errors.Is(err, chat.ErrSession) {
@@ -463,7 +467,7 @@ func TestEndRevokesBothSessionsAndInvite(t *testing.T) {
 	}
 	events := subscribeRoom(t, s, creator.SessionToken)
 	other := subscribeRoom(t, s, guest.SessionToken)
-	if _, err := s.Send(testContext, creator.SessionToken, "one", "hello"); err != nil {
+	if _, err := s.Send(testContext, creator.SessionToken, "one", hello); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.End(testContext, guest.SessionToken); err != nil {
@@ -491,7 +495,7 @@ func TestExpiryRevokesAccessWithoutPriorSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := subscribeRoom(t, s, creator.SessionToken)
-	if _, err := s.Send(testContext, creator.SessionToken, "one", "hello"); err != nil {
+	if _, err := s.Send(testContext, creator.SessionToken, "one", hello); err != nil {
 		t.Fatal(err)
 	}
 	receiveEvent(t, events, "message")
@@ -499,7 +503,7 @@ func TestExpiryRevokesAccessWithoutPriorSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, secret := range []string{creator.SessionToken, guest.SessionToken} {
-		if _, err := s.Send(testContext, secret, "one", "hello"); !errors.Is(err, chat.ErrSession) {
+		if _, err := s.Send(testContext, secret, "one", hello); !errors.Is(err, chat.ErrSession) {
 			t.Fatalf("send before sweep: %v", err)
 		}
 		if err := s.End(testContext, secret); !errors.Is(err, chat.ErrSession) {
@@ -539,7 +543,7 @@ func TestExpiryRevokesAccessWithoutPriorSweep(t *testing.T) {
 func TestExpireSkipsLockedRoomsAndDrainsBatches(t *testing.T) {
 	s, locked := newCreatedService(t)
 	open := createRoom(t, s, "")
-	if _, err := s.pool.Exec(testContext, `INSERT INTO rooms (id, title, status, expires_at) SELECT 'expired-' || n, 'R', 'open', clock_timestamp() - interval '1 second' FROM generate_series(1, 205) n`); err != nil {
+	if _, err := s.pool.Exec(testContext, `INSERT INTO rooms (id, encrypted_title, status, expires_at) SELECT 'expired-' || n, 'R', 'open', clock_timestamp() - interval '1 second' FROM generate_series(1, 205) n`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.pool.Exec(testContext, `UPDATE rooms SET expires_at = clock_timestamp() - interval '1 second' WHERE id = $1`, locked.Room.ID); err != nil {
@@ -578,7 +582,7 @@ func TestExpireSkipsLockedRoomsAndDrainsBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRoomRevoked(t, s, locked, locked, "expired")
-	if _, err := s.Send(testContext, open.SessionToken, "still-open", "hello"); err != nil {
+	if _, err := s.Send(testContext, open.SessionToken, "still-open", hello); err != nil {
 		t.Fatalf("unexpired room: %v", err)
 	}
 }
@@ -592,7 +596,7 @@ func TestOperationsCommitFailureDoesNotPublish(t *testing.T) {
 			var err error
 			switch operation {
 			case "send":
-				_, err = s.Send(cancelAtCommit(t), creator.SessionToken, "one", "hello")
+				_, err = s.Send(cancelAtCommit(t), creator.SessionToken, "one", hello)
 			case "end":
 				err = s.End(cancelAtCommit(t), creator.SessionToken)
 			case "expire":
@@ -620,7 +624,7 @@ func TestOperationsCommitFailureDoesNotPublish(t *testing.T) {
 				}
 				receiveEvent(t, events, "room_expired")
 			} else {
-				if _, err := s.Send(testContext, creator.SessionToken, "one", "hello"); err != nil {
+				if _, err := s.Send(testContext, creator.SessionToken, "one", hello); err != nil {
 					t.Fatalf("retry: %v", err)
 				}
 				receiveEvent(t, events, "message")
@@ -636,7 +640,7 @@ func TestReadyAndOperationDatabaseErrors(t *testing.T) {
 	}
 	operations := map[string]func(context.Context) error{
 		"send": func(ctx context.Context) error {
-			_, err := s.Send(ctx, creator.SessionToken, "one", "hello")
+			_, err := s.Send(ctx, creator.SessionToken, "one", hello)
 			return err
 		},
 		"end":    func(ctx context.Context) error { return s.End(ctx, creator.SessionToken) },
@@ -674,7 +678,7 @@ func TestReadyAndOperationDatabaseErrors(t *testing.T) {
 func TestClosePreservesRoomsSessionsAndPool(t *testing.T) {
 	s, creator := newCreatedService(t)
 	events := subscribeRoom(t, s, creator.SessionToken)
-	if _, err := s.Send(testContext, creator.SessionToken, "one", "hello"); err != nil {
+	if _, err := s.Send(testContext, creator.SessionToken, "one", hello); err != nil {
 		t.Fatal(err)
 	}
 	receiveEvent(t, events, "message")
@@ -692,7 +696,7 @@ func TestClosePreservesRoomsSessionsAndPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if messages := receiveEvent(t, ch, "snapshot").Payload.(chat.SnapshotEvent).Room.Messages; len(messages) != 1 || messages[0].Text != "hello" {
+	if messages := receiveEvent(t, ch, "snapshot").Payload.(chat.SnapshotEvent).Room.Messages; len(messages) != 1 || messages[0].Ciphertext != hello {
 		t.Fatalf("history after Close: %+v", messages)
 	}
 	if _, err := reconnected.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken}); err != nil {
@@ -732,7 +736,7 @@ func TestSendAndEndRecheckSessionAfterRoomLock(t *testing.T) {
 						done <- s.End(ctx, creator.SessionToken)
 						return
 					}
-					_, err := s.Send(ctx, creator.SessionToken, "one", "hello")
+					_, err := s.Send(ctx, creator.SessionToken, "one", hello)
 					done <- err
 				}()
 				waitForBlockedTransaction(t, s.pool, tx.Conn().PgConn().PID())
@@ -793,7 +797,7 @@ func TestSendAndEndLockWaitErrors(t *testing.T) {
 						done <- writer.End(ctx, creator.SessionToken)
 						return
 					}
-					_, err := writer.Send(ctx, creator.SessionToken, "one", "hello")
+					_, err := writer.Send(ctx, creator.SessionToken, "one", hello)
 					done <- err
 				}()
 				waitForBlockedTransaction(t, s.pool, tx.Conn().PgConn().PID())
