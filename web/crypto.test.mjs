@@ -25,7 +25,7 @@ async function pair(password = '') {
   return { secret, creatorSecrets, guestSecrets, c, g };
 }
 
-test('base64url и padding', () => {
+test('base64url and padding', () => {
   const bytes = Uint8Array.from([0, 251, 255, 1]);
   assert.deepEqual(e2ee.fromB64(e2ee.toB64(bytes)), bytes);
   assert.throws(() => e2ee.fromB64('a+b/'));
@@ -37,16 +37,16 @@ test('base64url и padding', () => {
   assert.throws(() => e2ee.unpad(new Uint8Array(256)));
 });
 
-test('verifier зависит от пароля и совпадает у сторон', async () => {
+test('verifier depends on the password and matches on both sides', async () => {
   const plain = await pair();
   assert.equal(plain.creatorSecrets.verifier, plain.guestSecrets.verifier);
   assert.equal(size(plain.creatorSecrets.verifier), 32);
-  const pwKey = await e2ee.passwordKey(plain.secret, 'кот');
+  const pwKey = await e2ee.passwordKey(plain.secret, 'café');
   const withPassword = await e2ee.roomSecrets(plain.secret, pwKey);
   assert.notEqual(withPassword.verifier, plain.creatorSecrets.verifier);
 });
 
-test('доли ключа подписаны с ролью', async () => {
+test('key shares are signed with their role', async () => {
   const { creatorSecrets, guestSecrets, c, g } = await pair();
   const share = await e2ee.signShare(creatorSecrets, 'creator', c.publicKey);
   assert.equal(size(share.public_key), 65);
@@ -57,20 +57,20 @@ test('доли ключа подписаны с ролью', async () => {
   assert.equal(await e2ee.verifyShare(other, 'creator', share), false);
 });
 
-test('обе стороны получают один ключ и код сверки', async () => {
-  const { creatorSecrets, guestSecrets, c, g } = await pair('пароль');
+test('both sides derive the same key and safety code', async () => {
+  const { creatorSecrets, guestSecrets, c, g } = await pair('pässwörd');
   const kc = await e2ee.messageKey(creatorSecrets, c.privateKey, c.publicKey, g.publicKey, 'creator');
   const kg = await e2ee.messageKey(guestSecrets, g.privateKey, c.publicKey, g.publicKey, 'guest');
   const meta = { roomId: 'room', senderId: 'alice', clientId: 'uuid-1' };
-  const ct = await e2ee.encryptMessage(kc, { ...meta, counter: 7, prev: 5, text: 'Привет <b>' });
+  const ct = await e2ee.encryptMessage(kc, { ...meta, counter: 7, prev: 5, text: 'Héllo <b> ✓' });
   assert.ok(validMessage(size(ct)));
-  assert.deepEqual(await e2ee.decryptMessage(kg, { ...meta, ciphertext: ct }), { counter: 7, prev: 5, text: 'Привет <b>' });
+  assert.deepEqual(await e2ee.decryptMessage(kg, { ...meta, ciphertext: ct }), { counter: 7, prev: 5, text: 'Héllo <b> ✓' });
   await assert.rejects(e2ee.decryptMessage(kg, { ...meta, senderId: 'bob', ciphertext: ct }));
   assert.equal(await e2ee.safetyCode(c.publicKey, g.publicKey), await e2ee.safetyCode(c.publicKey, g.publicKey));
   assert.match(await e2ee.safetyCode(c.publicKey, g.publicKey), /^\d{4} \d{4} \d{4}$/);
 });
 
-test('размеры совпадают с проверками сервера (envelope.go)', async () => {
+test('sizes match the server checks (envelope.go)', async () => {
   const { creatorSecrets, c, g } = await pair();
   assert.equal(e2ee.PAD_BLOCK, GO.pad);
   assert.equal(size(await e2ee.encryptTitle(creatorSecrets, '')), NONCE + GO.pad + TAG);
@@ -80,16 +80,16 @@ test('размеры совпадают с проверками сервера (
   assert.equal(e2ee.fromB64(share.public_key)[0], 4);
   assert.equal(size(share.mac), GO.mac);
   assert.equal(size(creatorSecrets.verifier), GO.mac);
-  assert.equal(await e2ee.decryptTitle(creatorSecrets, await e2ee.encryptTitle(creatorSecrets, 'Вечер')), 'Вечер');
+  assert.equal(await e2ee.decryptTitle(creatorSecrets, await e2ee.encryptTitle(creatorSecrets, 'Évening')), 'Évening');
   const k = await e2ee.messageKey(creatorSecrets, c.privateKey, c.publicKey, g.publicKey, 'creator');
-  const max = await e2ee.encryptMessage(k, { roomId: 'r', senderId: 's', clientId: 'c', counter: 1, text: 'я'.repeat(2000) });
+  const max = await e2ee.encryptMessage(k, { roomId: 'r', senderId: 's', clientId: 'c', counter: 1, text: 'é'.repeat(2000) });
   assert.equal(size(max), NONCE + GO.maxPadded + TAG);
   assert.ok(validMessage(size(max)));
   assert.ok(validMessage(size(await e2ee.encryptMessage(k, { roomId: 'r', senderId: 's', clientId: 'c', counter: 1, text: 'a' }))));
   await assert.rejects(e2ee.encryptMessage(k, { roomId: 'r', senderId: 's', clientId: 'c', counter: 1, text: 'a'.repeat(4001) }));
 });
 
-test('ключи неизвлекаемы', async () => {
+test('keys are non-extractable', async () => {
   const { creatorSecrets, c } = await pair();
   assert.equal(c.privateKey.extractable, false);
   assert.equal(creatorSecrets.titleKey.extractable, false);
@@ -97,7 +97,7 @@ test('ключи неизвлекаемы', async () => {
   await assert.rejects(crypto.subtle.exportKey('jwk', c.privateKey));
 });
 
-test('checkCounters находит повторы и удалённые сообщения', () => {
+test('checkCounters finds replays and deleted messages', () => {
   const flags = e2ee.checkCounters([
     { senderId: 'a', counter: 1, prev: 0 },
     { senderId: 'b', counter: 1, prev: 0 },
@@ -114,7 +114,7 @@ test('checkCounters находит повторы и удалённые сооб
   ]);
 });
 
-test('wipe и withWiped обнуляют буферы, даже при исключении', async () => {
+test('wipe and withWiped zero buffers, even on exceptions', async () => {
   const a = Uint8Array.of(1, 2, 3), b = new Uint8Array([9, 9]);
   e2ee.wipe(a, b, null, undefined);
   assert.deepEqual([...a, ...b], [0, 0, 0, 0, 0]);
@@ -126,7 +126,7 @@ test('wipe и withWiped обнуляют буферы, даже при искл�
   assert.deepEqual([...d], [0]);
 });
 
-test('roomSalt не обнуляется: он нужен после reload', async () => {
+test('roomSalt is not wiped: it is needed after reload', async () => {
   const secrets = await e2ee.roomSecrets(e2ee.randomSecret());
   assert.ok(secrets.roomSalt.some((x) => x !== 0));
 });

@@ -6,12 +6,12 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$project_dir"
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "Ошибка: Docker не найден. Установите Docker и повторите запуск." >&2
+  echo "Error: Docker not found. Install Docker and run again." >&2
   exit 1
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
-  echo "Ошибка: команда 'docker compose' недоступна." >&2
+  echo "Error: the 'docker compose' command is not available." >&2
   exit 1
 fi
 
@@ -25,7 +25,7 @@ fi
 
 if [[ -z "$key" ]]; then
   if ! command -v openssl >/dev/null 2>&1; then
-    echo "Ошибка: OpenSSL не найден; он нужен для создания локального ключа." >&2
+    echo "Error: OpenSSL not found; it is needed to create the local key." >&2
     exit 1
   fi
 
@@ -36,15 +36,15 @@ if [[ -z "$key" ]]; then
   else
     printf '%s=%s\n' "$key_name" "$key" >"$env_file"
   fi
-  echo "Создан локальный секрет в .env."
+  echo "Created a local secret in .env."
 fi
 
 if [[ ! "$key" =~ ^[[:xdigit:]]{64}$ ]]; then
-  echo "Ошибка: $key_name в .env должен содержать ровно 64 hex-символа." >&2
+  echo "Error: $key_name in .env must be exactly 64 hex characters." >&2
   exit 1
 fi
 
 chmod 600 "$env_file"
 
-echo "nullchat запускается на http://127.0.0.1:8080 (остановка: Ctrl+C)"
+echo "nullchat is starting at http://127.0.0.1:8080 (stop: Ctrl+C)"
 exec docker compose up --build

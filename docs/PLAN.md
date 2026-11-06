@@ -1,305 +1,305 @@
-# Пошаговый план модернизации nullchat
+# nullchat step-by-step modernization plan
 
-Статус: реализована PostgreSQL-основа 0.2: шаги 1 и 3, локальная инфраструктура шага 4, транзакционные сценарии шага 5 и восстановление/TTL из части шага 7. Шаг 2, CI шага 4 и шаги 6–14 целиком не завершены. Outbox/replay, paging, физическая очистка и несколько сервисов отложены. Обновлено 26.09.2026; результаты проверок — в [VERIFICATION.md](VERIFICATION.md).
+Status: the PostgreSQL foundation of 0.2 is implemented: steps 1 and 3, the local infrastructure of step 4, the transactional scenarios of step 5, and restart recovery/TTL from part of step 7. Step 2, the CI of step 4, and steps 6–14 are not complete. Outbox/replay, paging, physical cleanup and multiple services are deferred. Updated 2026-09-26; verification results are in [VERIFICATION.md](VERIFICATION.md).
 
-Цель: превратить демо в надёжный Go-проект для портфолио, сохраняя работающий пользовательский сценарий после каждого изменения. Сначала — монолит с PostgreSQL, затем публичная демонстрация и, при желании, два сервиса.
+Goal: turn the demo into a reliable Go portfolio project while keeping the user flow working after every change. First a monolith with PostgreSQL, then a public demo and, optionally, two services.
 
-## Отправная точка
+## Starting point
 
-Уже есть комнаты на двоих, одноразовые приглашения, WebSocket, PostgreSQL-история, TTL, дедупликация, идемпотентные create/join и тесты с детектором гонок. Runtime использует `internal/storage/postgres`; memory-адаптер сохранён для демо/тестов. Исходный сценарий описан в [ТЗ](../SPEC.md).
+There are already two-person rooms, one-time invites, WebSocket, PostgreSQL history, TTL, deduplication, idempotent create/join and tests with the race detector. The runtime uses `internal/storage/postgres`; the memory adapter is kept for the demo/tests. The original flow is described in the [spec](../SPEC.md).
 
-Конкретные ограничения текущего кода:
+Concrete limitations of the current code:
 
-| Где | Сейчас | Что нужно изменить |
+| Where | Now | What needs to change |
 |---|---|---|
-| `chat.Application`, PostgreSQL-адаптер, hub | Границы выделены; SQL и транзакции внутри адаптера | Сохранить границы при будущих изменениях |
-| `Service.Close()` и `cmd/server/main.go` | Остановка закрывает транспорт/pool, комнаты сохраняются | Физическая очистка и retention ещё нужны |
-| `web/app.js`, `server_shutdown` | Сессия сохраняется, reconnect разрешён | Полный UI failed/unavailable ещё нужен |
-| `Create` / `Join` | Повтор с тем же Idempotency-Key возвращает encrypted replay credentials | Ключ шифрования должен сохраняться между рестартами |
-| `Send` | Ack после commit PostgreSQL | Outbox для промежутка commit→broadcast |
-| `Subscribe` | Полный snapshot под room lock, локальная подписка без разрыва | История страницами и восстановление потока по курсору |
-| `web/app.js`, обработчик ошибок | Неудачное сообщение удаляется из pending; текст возвращается только в пустое поле ввода | Явное состояние ошибки и повтор без потери текста |
-| `httpapi.Server.admit` | Один бюджет на create, join и reconnect | Раздельные ограничения с понятным поведением клиента |
-| Compose / CI | PostgreSQL 17, миграции, readiness и изолированная тестовая БД описаны в Compose; результаты запуска в VERIFICATION | Удалённый CI ещё не проверен |
+| `chat.Application`, PostgreSQL adapter, hub | Boundaries extracted; SQL and transactions inside the adapter | Keep the boundaries in future changes |
+| `Service.Close()` and `cmd/server/main.go` | Shutdown closes the transport/pool, rooms are kept | Physical cleanup and retention still needed |
+| `web/app.js`, `server_shutdown` | Session is kept, reconnect allowed | Full failed/unavailable UI still needed |
+| `Create` / `Join` | A retry with the same Idempotency-Key returns encrypted replay credentials | The encryption key must persist across restarts |
+| `Send` | Ack after the PostgreSQL commit | Outbox for the commit→broadcast gap |
+| `Subscribe` | Full snapshot under the room lock, local subscription with no gap | Paged history and cursor-based stream recovery |
+| `web/app.js`, error handler | A failed message is removed from pending; the text is restored only into an empty input field | Explicit error state and retry without losing text |
+| `httpapi.Server.admit` | One budget for create, join and reconnect | Separate limits with clear client behavior |
+| Compose / CI | PostgreSQL 17, migrations, readiness and an isolated test DB are described in Compose; run results are in VERIFICATION | Remote CI not yet verified |
 
-## Маршрут и контрольные точки
+## Route and checkpoints
 
 ```mermaid
 flowchart TD
-    A[Демо в памяти] --> B[1–3: контракты и границы приложения]
-    B --> C[4–8: PostgreSQL, доставка и восстановление]
-    C --> D[9–12: устойчивость, проверки и публикация]
-    D --> E[Готовый проект для портфолио]
-    E -. отдельный эксперимент .-> F[13–14: два сервиса и проверка отказов]
+    A[In-memory demo] --> B[1–3: contracts and application boundaries]
+    B --> C[4–8: PostgreSQL, delivery and recovery]
+    C --> D[9–12: resilience, checks and publication]
+    D --> E[Finished portfolio project]
+    E -. separate experiment .-> F[13–14: two services and failure testing]
 ```
 
-| Результат | Шаги | Условие завершения |
+| Result | Steps | Completion condition |
 |---|---|---|
-| Версия 0.2: надёжный монолит | 1–8 | Активные комнаты и подтверждённые сообщения переживают рестарт; ошибки сети допускают безопасный повтор |
-| Версия 0.3: версия для портфолио | 9–12 | Рабочее HTTPS-демо, CI, автоматический браузерный сценарий и измерения |
-| Версия 0.4: распределённый эксперимент | 13–14 | Gateway и core восстанавливаются после независимых сбоев; результат сравнен с монолитом |
+| Version 0.2: reliable monolith | 1–8 | Active rooms and acknowledged messages survive a restart; network errors allow a safe retry |
+| Version 0.3: portfolio version | 9–12 | Working HTTPS demo, CI, automated browser scenario and measurements |
+| Version 0.4: distributed experiment | 13–14 | Gateway and core recover after independent failures; the result is compared with the monolith |
 
-Укрепление по разбору аналога (логи без IP, фиксированный размер сообщений, физическая очистка, паника, воспроизводимая сборка, лимиты без хранения IP) — отдельный [план](superpowers/plans/2026-11-06-competitor-hardening.md); его этапы A, C1 и F закрывают часть шагов 9, 11 и 12.
+Hardening based on the review of a comparable project (logs without IPs, fixed message size, physical cleanup, panics, reproducible build, limits without storing IPs) is a separate [plan](superpowers/plans/2026-11-06-competitor-hardening.md); its stages A, C1 and F cover part of steps 9, 11 and 12.
 
-Порядок выполнения — сверху вниз. Не нужно заранее добавлять Redis, брокер, Kubernetes, группы или файлы. Они не входят в критерии готовности этого плана. E2EE добавлено отдельно по запросу (решение 006 в ARCHITECTURE.md, [план](superpowers/plans/2026-11-06-e2ee.md)); последующие шаги (PostgreSQL, курсоры, outbox) хранят `ciphertext`, `encrypted_title` и `key_share` как непрозрачные данные. Тесты добавляются в том же изменении, что и соответствующее поведение, а не откладываются на конец.
+Steps are done top to bottom. Do not add Redis, a broker, Kubernetes, groups or files ahead of time. They are not part of this plan's completion criteria. E2EE was added separately on request (decision 006 in ARCHITECTURE.md, [plan](superpowers/plans/2026-11-06-e2ee.md)); later steps (PostgreSQL, cursors, outbox) store `ciphertext`, `encrypted_title` and `key_share` as opaque data. Tests are added in the same change as the corresponding behavior, not postponed to the end.
 
-## Шаг 1. Зафиксировать поведение следующей версии
+## Step 1. Pin down the behavior of the next version
 
-**Зачем:** отделить намеренные свойства временного чата от ограничений демо.
+**Why:** separate the intentional properties of an ephemeral chat from the demo's limitations.
 
-- [x] Обновить SPEC: TTL по-прежнему начинается при создании и не продлевается; закрытая вкладка не освобождает место; любой участник может завершить комнату.
-- [x] Зафиксировать новое правило: перезапуск backend разрывает соединение, но не закрывает активную комнату и не отзывает сессию.
-- [x] Определить `ack` как принятие сообщения БД, отдельно от доставки и прочтения собеседником. Указать зависимость durability от настроек PostgreSQL.
-- [x] Описать состояния интерфейса: connecting, connected, reconnecting, expired, closed, unavailable; отличать временную ошибку от окончательного отзыва доступа.
-- [x] Разделить ошибки лимитов: заполненная комната, лимит сообщений, лимит соединений, частые запросы, недоступная БД.
-- [x] Зафиксировать лимиты версии 0.2, срок хранения данных и срок повторного получения результата create/join.
-- [x] Не зависеть от фиксированных псевдонимов: backend генерирует случайное английское display name для каждого участника и не допускает повторения имени внутри комнаты.
+- [x] Update SPEC: TTL still starts at creation and is not extended; a closed tab does not free the seat; any participant can end the room.
+- [x] Pin down the new rule: a backend restart breaks the connection but does not close an active room or revoke the session.
+- [x] Define `ack` as the DB accepting the message, separate from delivery to and reading by the contact. State that durability depends on PostgreSQL settings.
+- [x] Describe the UI states: connecting, connected, reconnecting, expired, closed, unavailable; distinguish a temporary error from a final revocation of access.
+- [x] Split limit errors: full room, message limit, connection limit, frequent requests, unavailable DB.
+- [x] Pin down the version 0.2 limits, the data retention period and the period for re-fetching the create/join result.
+- [x] Do not depend on fixed pseudonyms: the backend generates a random English display name for each participant and does not allow a repeated name within a room.
 
-**Файлы:** `SPEC.md`, `docs/ARCHITECTURE.md`, `internal/chat/service.go`.
+**Files:** `SPEC.md`, `docs/ARCHITECTURE.md`, `internal/chat/service.go`.
 
-**Готово, когда:** для потери сети, рестарта, поздней отправки и повторного входа можно однозначно описать результат. Изменения ТЗ помечены как целевые до реализации.
+**Done when:** the outcome of network loss, restart, late send and re-join can be described unambiguously. Spec changes are marked as target behavior until implemented.
 
-## Шаг 2. Исправить состояния отправки и переподключения в интерфейсе
+## Step 2. Fix the send and reconnect states in the UI
 
-**Зачем:** не терять введённый текст при ошибках, уже возможных в демо.
+**Why:** do not lose typed text on errors that are already possible in the demo.
 
-- [ ] Разделить сообщения на pending, accepted и failed; failed оставлять в интерфейсе с кнопкой повтора.
-- [ ] Повторять сообщение с прежним `client_message_id`; изменение текста оформлять как новое сообщение с новым ID.
-- [ ] Не перезаписывать новый черновик текстом неудачной отправки.
-- [ ] Проверять состояние сокета перед отправкой; добавить случайный разброс задержек reconnect и ограниченную частоту повторов.
-- [ ] Различать временную перегрузку, истечение TTL и неверную сессию. Исчерпание лимита соединений не должно само по себе стирать действующую сессию.
-- [ ] Оставить историю вне постоянного браузерного хранилища; явно описать, что происходит с неотправленным текстом при reload.
+- [ ] Split messages into pending, accepted and failed; keep failed ones in the UI with a retry button.
+- [ ] Retry a message with the same `client_message_id`; treat edited text as a new message with a new ID.
+- [ ] Do not overwrite a new draft with the text of a failed send.
+- [ ] Check the socket state before sending; add random jitter to reconnect delays and a bounded retry rate.
+- [ ] Distinguish temporary overload, TTL expiry and an invalid session. Hitting the connection limit must not by itself erase a valid session.
+- [ ] Keep history out of persistent browser storage; describe explicitly what happens to unsent text on reload.
 
-**Файлы:** `web/app.js`, при необходимости `web/style.css` и ошибки `internal/httpapi`.
+**Files:** `web/app.js`, if needed `web/style.css` and `internal/httpapi` errors.
 
-**Проверки:** ошибка отправки при непустом новом черновике; потеря ack; повтор одного сообщения; временный отказ reconnect. Текст не исчезает и не создаёт дубликаты.
+**Checks:** send error with a non-empty new draft; lost ack; retry of a single message; temporary reconnect failure. Text does not disappear and does not create duplicates.
 
-**Готово, когда:** пользователь видит, что принято сервером, что не отправлено и что можно повторить.
+**Done when:** the user sees what the server accepted, what was not sent and what can be retried.
 
-## Шаг 3. Выделить прикладные границы без изменения поведения
+## Step 3. Extract application boundaries without changing behavior
 
-**Зачем:** добавить PostgreSQL без SQL в HTTP-обработчиках и без превращения одного пакета в универсальный framework.
+**Why:** add PostgreSQL without SQL in HTTP handlers and without turning a single package into a general-purpose framework.
 
-- [x] Оставить типы комнат, сообщений и сценариев в transport-independent слое `internal/chat`; реализация адаптера не импортирует HTTP или WebSocket.
-- [x] Определить небольшой порт `Application` вокруг атомарных операций: создание комнаты с сессией, использование приглашения, добавление сообщения, завершение комнаты, чтение истории через snapshot.
-- [x] Добавить `context.Context` в операции, которые будут обращаться к БД или сети.
-- [x] Перенести in-memory хранение в `internal/storage/memory`; перенести подписки и ограниченные очереди в отдельный компонент `internal/realtime`.
-- [x] Обеспечить атомарность правил внутри операции адаптера. Не реализовывать вход как независимые `GetRoom` → проверка → `SaveRoom`.
-- [x] Сохранить текущую гарантию отсутствия разрыва между snapshot и подпиской до замены её механизмом из шага 8.
-- [x] Разделить `End` и инфраструктурный shutdown: PostgreSQL `Service.Close` закрывает подписки, runtime — транспорт и pool; комнаты не завершаются.
+- [x] Keep room, message and scenario types in the transport-independent `internal/chat` layer; the adapter implementation does not import HTTP or WebSocket.
+- [x] Define a small `Application` port around atomic operations: create a room with a session, use an invite, add a message, end a room, read history via a snapshot.
+- [x] Add `context.Context` to operations that will access the DB or network.
+- [x] Move in-memory storage into `internal/storage/memory`; move subscriptions and bounded queues into a separate `internal/realtime` component.
+- [x] Ensure rules are atomic within an adapter operation. Do not implement join as independent `GetRoom` → check → `SaveRoom`.
+- [x] Keep the current guarantee of no gap between snapshot and subscription until it is replaced by the mechanism from step 8.
+- [x] Separate `End` from infrastructure shutdown: PostgreSQL `Service.Close` closes subscriptions, the runtime closes the transport and pool; rooms are not ended.
 
-**Предлагаемая структура после рефакторинга:**
+**Proposed structure after the refactoring:**
 
 ```text
 cmd/server/
-internal/chat/               модели, сценарии и используемые ими порты
-internal/storage/memory/     адаптер демо и контрактные тесты
-internal/storage/postgres/   активный адаптер и встроенные migrations/
-internal/realtime/           подписки, очереди и диспетчер событий
-internal/httpapi/            HTTP и WebSocket
-internal/config/            разбор и проверка конфигурации
+internal/chat/               models, scenarios and the ports they use
+internal/storage/memory/     demo adapter and contract tests
+internal/storage/postgres/   active adapter and embedded migrations/
+internal/realtime/           subscriptions, queues and event dispatcher
+internal/httpapi/            HTTP and WebSocket
+internal/config/            configuration parsing and validation
 web/
 ```
 
-**Проверки:** существующие интеграционные тесты; общие контрактные тесты для адаптеров хранения; `go test -race ./...`.
+**Checks:** existing integration tests; shared contract tests for storage adapters; `go test -race ./...`.
 
-**Прогресс:** `chat.Application`, `internal/storage/memory`, `internal/storage/postgres` и `internal/realtime.Hub` выделены. Сценарии проверяются отдельными тестами адаптеров; единого параметризованного contract suite пока нет.
+**Progress:** `chat.Application`, `internal/storage/memory`, `internal/storage/postgres` and `internal/realtime.Hub` are extracted. Scenarios are checked by separate adapter tests; there is no single parameterized contract suite yet.
 
-**Готово, когда:** внешнее API демо работает как прежде, прикладные типы не зависят от SQL/HTTP, а места обеспечения атомарности явно задокументированы. Не нужно вводить интерфейс для каждой структуры.
+**Done when:** the demo's external API works as before, application types do not depend on SQL/HTTP, and the places that ensure atomicity are explicitly documented. There is no need to introduce an interface for every struct.
 
-## Шаг 4. Подготовить PostgreSQL, миграции и конфигурацию
+## Step 4. Set up PostgreSQL, migrations and configuration
 
-**Зависит от:** шага 3.
+**Depends on:** step 3.
 
-- [x] Добавить PostgreSQL 17 (`postgres:17-alpine`) в Compose с named volume и `pg_isready`; pgx v5.11.0, Go floor 1.25.
-- [x] Добавить встроенные версионируемые миграции и отдельную команду `/migrate`; API сам миграции не запускает.
-- [x] Проверять `DATABASE_URL`, `IDEMPOTENCY_ENCRYPTION_KEY`, `ADDR`, `DB_MAX_CONNS`, `DB_OPERATION_TIMEOUT`, `EXPIRY_INTERVAL` при старте без вывода секретов. Лимиты комнат/сообщений остаются константами.
-- [x] Подключить pgxpool с ограничениями и timeout; освобождать его при остановке.
-- [x] Разделить `/healthz` и `/readyz`: readiness проверяет ping БД, а не наличие миграций.
-- [x] Добавить локальную `nullchat_test` и тесты повторного применения миграций; Compose test profile запускает integration/race.
-- [ ] Подключить тестовую БД и существующие интеграционные тесты миграций к CI; проверить удалённый запуск.
+- [x] Add PostgreSQL 17 (`postgres:17-alpine`) to Compose with a named volume and `pg_isready`; pgx v5.11.0, Go floor 1.25.
+- [x] Add embedded versioned migrations and a separate `/migrate` command; the API does not run migrations itself.
+- [x] Validate `DATABASE_URL`, `IDEMPOTENCY_ENCRYPTION_KEY`, `ADDR`, `DB_MAX_CONNS`, `DB_OPERATION_TIMEOUT`, `EXPIRY_INTERVAL` at startup without printing secrets. Room/message limits remain constants.
+- [x] Connect pgxpool with limits and a timeout; release it on shutdown.
+- [x] Split `/healthz` and `/readyz`: readiness checks a DB ping, not the presence of migrations.
+- [x] Add a local `nullchat_test` and tests for re-applying migrations; the Compose test profile runs integration/race.
+- [ ] Connect the test DB and the existing migration integration tests to CI; verify a remote run.
 
-**Начальная схема:**
+**Initial schema:**
 
-| Таблица | Основные поля и ограничения |
+| Table | Main fields and constraints |
 |---|---|
-| `rooms` | ID, title, status, expires_at, closed_at, счётчики последовательностей |
-| `participants` | ID, room_id, name, slot; slot только 1 или 2, UNIQUE(room_id, slot) |
+| `rooms` | ID, title, status, expires_at, closed_at, sequence counters |
+| `participants` | ID, room_id, name, slot; slot only 1 or 2, UNIQUE(room_id, slot) |
 | `sessions` | token_hash, participant_id, expires_at, revoked_at |
 | `invites` | token_hash, room_id, consumed_at, expires_at |
 | `messages` | ID, room_id, participant_id, client_message_id, sequence, text, created_at |
 
-Индексы: `rooms(expires_at)`, `messages(room_id, sequence)`. Уникальность сообщений: `(room_id, participant_id, client_message_id)` и `(room_id, sequence)`. Внешние ключи должны исключать сообщение от участника другой комнаты. По одному ID без проверки сессии данные не выдаются.
+Indexes: `rooms(expires_at)`, `messages(room_id, sequence)`. Message uniqueness: `(room_id, participant_id, client_message_id)` and `(room_id, sequence)`. Foreign keys must rule out a message from a participant of another room. No data is returned by ID alone without a session check.
 
-**Готово, когда:** чистая БД разворачивается миграциями, повторный запуск не меняет применённую схему, приложение не сообщает readiness до доступности БД, интеграционные тесты проходят в CI.
+**Done when:** a clean DB is set up by migrations, a repeated run does not change the applied schema, the application does not report readiness until the DB is available, and the integration tests pass in CI.
 
-## Шаг 5. Реализовать транзакционные сценарии и безопасный повтор HTTP
+## Step 5. Implement transactional scenarios and safe HTTP retry
 
-**Зависит от:** шага 4.
+**Depends on:** step 4.
 
-- [x] `Create`: комната, первый участник, приглашение и сессия создаются одной транзакцией.
-- [x] `Join`: проверка срока, атомарное использование приглашения, занятие второго места и выдача сессии происходят вместе.
-- [x] `Send`: проверка доступа и срока, дедупликация, выделение sequence и запись сообщения — одна транзакция; ack только после commit.
-- [x] `End`: закрытие, отзыв сессий и приглашения, прекращение дальнейших отправок. Повтор со старым токеном получает `session_invalid`; успешный replay end не реализован.
-- [x] Сериализовать конфликтующие изменения room lock и ограничениями БД; Join берёт room→invite для совместимости с end/expiry.
-- [x] Повторно проверять TTL по времени БД после получения room lock, перед записью и commit; ожидание lock не разрешает позднюю отправку.
-- [x] Идемпотентность create/join: тот же ключ и запрос возвращают исходный результат, другой запрос — конфликт.
+- [x] `Create`: the room, first participant, invite and session are created in one transaction.
+- [x] `Join`: the expiry check, atomic invite use, taking the second seat and issuing the session happen together.
+- [x] `Send`: the access and expiry check, deduplication, sequence allocation and message write are one transaction; ack only after commit.
+- [x] `End`: closing, revoking sessions and the invite, stopping further sends. A retry with the old token gets `session_invalid`; a successful end replay is not implemented.
+- [x] Serialize conflicting changes with the room lock and DB constraints; Join takes room→invite for compatibility with end/expiry.
+- [x] Re-check TTL against DB time after acquiring the room lock, before the write and the commit; waiting for the lock does not allow a late send.
+- [x] Create/join idempotency: the same key and request return the original result, a different request gets a conflict.
 
-**Выдача токенов при повторе реализована:** AES-GCM response envelope в `idempotency_requests`, SHA-256 ключа и отпечаток endpoint/нормализованного запроса. Replay ограничен временем жизни комнаты и максимум 24 часами. Deployment key хранится вне репозитория и не меняется при рестарте. Открытые токены не пишутся в БД/логи; физическое удаление старых строк ещё не реализовано.
+**Token issuance on retry is implemented:** an AES-GCM response envelope in `idempotency_requests`, a SHA-256 of the key and a fingerprint of the endpoint/normalized request. Replay is limited to the room's lifetime and at most 24 hours. The deployment key is stored outside the repository and does not change on restart. Plaintext tokens are not written to the DB/logs; physical deletion of old rows is not implemented yet.
 
-**Проверки:** одновременный join из десятков запросов; конкурентные дубликаты сообщений; send одновременно с end/TTL; потеря ответа после commit; rollback в середине операции. Для идемпотентности проверять и успешный повтор, и отказ с другим запросом/секретом.
+**Checks:** concurrent join from dozens of requests; concurrent duplicate messages; send concurrent with end/TTL; response lost after commit; rollback in the middle of an operation. For idempotency, check both a successful retry and a rejection with a different request/secret.
 
-**Готово, когда:** ограничения обеспечивает PostgreSQL, а потеря ответа не создаёт дополнительную комнату/участника и не лишает клиента уже выданной сессии в пределах согласованного окна повтора.
+**Done when:** constraints are enforced by PostgreSQL, and a lost response neither creates an extra room/participant nor deprives the client of an already issued session within the agreed retry window.
 
-## Шаг 6. Устранить разрыв между записью и доставкой события
+## Step 6. Close the gap between the write and event delivery
 
-**Зачем:** успешный commit не гарантирует, что следующий вызов broadcast состоится. Одного reconnect недостаточно для клиента, который остаётся подключённым и не знает о пропуске.
+**Why:** a successful commit does not guarantee that the following broadcast call will happen. A reconnect alone is not enough for a client that stays connected and does not know it missed something.
 
-- [ ] Добавить журнал событий/outbox в PostgreSQL. Изменение комнаты или сообщения и соответствующее событие записываются одной транзакцией.
-- [ ] Ввести уникальный ID и последовательность событий внутри комнаты. Курсор событий и sequence сообщений — разные сущности, поскольку события включают вход и закрытие.
-- [ ] Добавить диспетчер, который читает события ограниченными порциями и передаёт их подписчикам; повтор после сбоя допускается.
-- [ ] Сохранять события для replay до согласованного срока, не удалять их сразу после первой публикации.
-- [ ] Дедуплицировать повторную доставку по ID; обеспечить порядок событий комнаты. Признак «опубликовано» не называть подтверждением доставки в браузер.
-- [ ] В первой версии поддерживать один активный core/диспетчер и явно ограничить запуск. Распределение событий между несколькими core — отдельная задача.
+- [ ] Add an event log/outbox in PostgreSQL. A room or message change and its corresponding event are written in one transaction.
+- [ ] Introduce a unique event ID and an event sequence within a room. The event cursor and the message sequence are different things, since events include joins and closing.
+- [ ] Add a dispatcher that reads events in bounded batches and passes them to subscribers; a retry after a failure is allowed.
+- [ ] Keep events for replay until an agreed period, do not delete them right after the first publication.
+- [ ] Deduplicate redelivery by ID; preserve the order of a room's events. Do not call the "published" flag a confirmation of delivery to the browser.
+- [ ] In the first version support one active core/dispatcher and explicitly restrict startup. Distributing events across several cores is a separate task.
 
-**Проверки:** падение после commit до публикации; падение после публикации до отметки обработки; временная недоступность БД. Сообщение появляется после восстановления, в UI остаётся одна копия.
+**Checks:** crash after commit before publication; crash after publication before marking as processed; temporary DB unavailability. The message appears after recovery, the UI keeps a single copy.
 
-**Готово, когда:** подтверждённое сообщение не остаётся навсегда невидимым из-за сбоя между БД и broadcast. Задержка восстановления измеряется; exactly-once транспорт не обещается.
+**Done when:** an acknowledged message does not stay invisible forever because of a failure between the DB and broadcast. The recovery delay is measured; exactly-once transport is not promised.
 
-## Шаг 7. Восстановление после рестарта и корректный TTL
+## Step 7. Recovery after restart and correct TTL
 
-**Частично реализовано, шаг не завершён:** restart/expiry покрыты тестами ниже; durable события, физическое удаление и retention остаются отложенными. SIGTERM/restart проверен, принудительное убийство процесса не входит в выполненную приёмку.
+**Partially implemented, step not complete:** restart/expiry are covered by the tests below; durable events, physical deletion and retention remain deferred. SIGTERM/restart is verified; forcibly killing the process is not part of the completed acceptance.
 
-**Зависит от:** шагов 5–6.
+**Depends on:** steps 5–6.
 
-- [x] Остановка процесса отменяет фоновые задачи и закрывает сокеты, но не вызывает бизнес-операцию завершения всех комнат.
-- [x] `server_shutdown` (WS close 1001) разрешает reconnect; сессия сохраняется при временной недоступности, включая код 1013.
-- [x] После запуска читать сессии и комнаты из БД по запросу; snapshot содержит полную историю конкретной комнаты.
-- [x] Логически закрывать просроченные комнаты при старте и периодически. Проверка доступа не зависит от фонового worker.
-- [x] Логический expiry обрабатывает порции с пропуском занятых room locks; повтор и rollback проверены тестами. Это не физическая очистка.
-- [ ] Разделить логическое закрытие и физическую очистку. Сначала прекратить доступ и сформировать событие, затем удалять данные по политике retention.
-- [ ] Описать судьбу сообщений, токенов, outbox, данных идемпотентности, WAL и резервных копий. Указать максимальную задержку очистки основной БД.
+- [x] Stopping the process cancels background tasks and closes sockets, but does not call the business operation that ends all rooms.
+- [x] `server_shutdown` (WS close 1001) allows reconnect; the session is kept during temporary unavailability, including code 1013.
+- [x] After startup, read sessions and rooms from the DB on demand; the snapshot contains the full history of the given room.
+- [x] Logically close expired rooms at startup and periodically. Access checks do not depend on the background worker.
+- [x] Logical expiry processes batches, skipping busy room locks; retry and rollback are verified by tests. This is not physical cleanup.
+- [ ] Separate logical closing from physical cleanup. First stop access and produce an event, then delete data according to the retention policy.
+- [ ] Describe what happens to messages, tokens, outbox, idempotency data, WAL and backups. State the maximum cleanup delay for the primary DB.
 
-**Проверки:** обычный restart и принудительное убийство процесса; TTL истекает во время простоя; сбой очистителя; конкурентная отправка во время закрытия. Сохранённый токен не открывает просроченную комнату.
+**Checks:** normal restart and forced process kill; TTL expires during downtime; cleaner failure; concurrent send during closing. A saved token does not open an expired room.
 
-**Готово, когда:** активный разговор продолжается после перезапуска без нового приглашения, подтверждённая история сохранена, просроченные комнаты не восстанавливают доступ.
+**Done when:** an active conversation continues after a restart without a new invite, acknowledged history is preserved, and expired rooms do not regain access.
 
-## Шаг 8. История страницами и восстановление потока по курсору
+## Step 8. Paged history and cursor-based stream recovery
 
-**Зависит от:** шагов 6–7.
+**Depends on:** steps 6–7.
 
-- [ ] Добавить авторизованное чтение истории с `before_sequence`/`after_sequence` и ограничением размера страницы.
-- [ ] При первом подключении передавать метаданные и ограниченную последнюю страницу; старые сообщения подгружать отдельно.
-- [ ] Для восстановления активной страницы передавать последний непрерывно обработанный event cursor. Максимальный увиденный номер не считать непрерывным курсором, если есть пропуск.
-- [ ] Спроектировать handoff истории и live-потока: подписаться и ограниченно буферизовать события, получить согласованный снимок с watermark, дочитать журнал до него, затем перейти к live с дедупликацией.
-- [ ] При переполнении буфера повторять синхронизацию; при недоступном старом курсоре возвращать явный `resync_required`.
-- [ ] Не использовать сохранённый курсор как замену локальной истории: после reload без истории нужен новый начальный снимок.
-- [ ] Сохранить положение прокрутки при загрузке старых сообщений; не перерисовывать весь список на каждый ack.
+- [ ] Add authorized history reads with `before_sequence`/`after_sequence` and a page size limit.
+- [ ] On first connect, send metadata and a bounded last page; load older messages separately.
+- [ ] To restore an active page, send the last contiguously processed event cursor. Do not treat the highest seen number as a contiguous cursor if there is a gap.
+- [ ] Design the handoff between history and the live stream: subscribe and buffer events in a bounded way, get a consistent snapshot with a watermark, read the log up to it, then switch to live with deduplication.
+- [ ] On buffer overflow repeat the synchronization; when the old cursor is unavailable, return an explicit `resync_required`.
+- [ ] Do not use a saved cursor as a substitute for local history: after a reload without history, a new initial snapshot is needed.
+- [ ] Preserve the scroll position when loading older messages; do not re-render the whole list on every ack.
 
-**Проверки:** сообщение на границе snapshot/subscribe; несколько страниц истории; обрыв между соседними событиями; устаревший cursor; повтор события; закрытие комнаты во время replay.
+**Checks:** a message on the snapshot/subscribe boundary; several history pages; a break between adjacent events; a stale cursor; event replay; room closing during replay.
 
-**Готово, когда:** большой разговор не отправляется целиком при каждом reconnect, порядок соблюдается, события на границе синхронизации не теряются.
+**Done when:** a large conversation is not sent in full on every reconnect, order is preserved, and events on the synchronization boundary are not lost.
 
-**Контрольная точка 0.2:** обновить ТЗ и README по фактически выполненным гарантиям; повторить браузерный сценарий с рестартом backend. Публикацию пока не считать завершённой.
+**Checkpoint 0.2:** update the spec and README according to the guarantees actually delivered; repeat the browser scenario with a backend restart. Do not consider publication complete yet.
 
-## Шаг 9. Устойчивость и ограничения публичного доступа
+## Step 9. Resilience and public access limits
 
-- [ ] Разделить бюджеты create, join, upgrade и отправки; при перегрузке возвращать стабильные коды и retry delay.
-- [ ] Не блокировать восстановление уже действующих сессий общим бюджетом создания комнат.
-- [ ] Учитывать все входящие WS-команды, включая ошибочные, а не только успешно записанные сообщения.
-- [ ] Ограничить память, подключения, очереди, размер истории на запрос и время операций БД.
-- [ ] Использовать явный список допустимых браузерных origin; доверять forwarded-заголовкам только от настроенного reverse proxy.
-- [ ] Выбрать модель ограничения злоупотреблений без постоянного хранения IP. Если нужны краткоживущие IP-derived счётчики, описать их срок и не заявлять отсутствие обработки IP.
-- [ ] Проверить отсутствие токенов, текстов и персональных данных в прикладных/proxy логах и метриках.
-- [ ] Протестировать draining и закрытие сокетов при SIGTERM; фоновые задачи должны завершаться в пределах timeout.
+- [ ] Split the create, join, upgrade and send budgets; under overload return stable codes and a retry delay.
+- [ ] Do not block recovery of already valid sessions with the shared room-creation budget.
+- [ ] Count all incoming WS commands, including erroneous ones, not only successfully written messages.
+- [ ] Limit memory, connections, queues, history size per request and DB operation time.
+- [ ] Use an explicit list of allowed browser origins; trust forwarded headers only from the configured reverse proxy.
+- [ ] Choose an abuse-limiting model without persistent IP storage. If short-lived IP-derived counters are needed, describe their lifetime and do not claim that IPs are not processed.
+- [ ] Verify that there are no tokens, texts or personal data in application/proxy logs and metrics.
+- [ ] Test draining and socket closing on SIGTERM; background tasks must finish within the timeout.
 
-**Готово, когда:** медленный клиент и поток некорректных запросов не создают неограниченные очереди/горутины, обычные участники восстанавливают соединение после временного сбоя.
+**Done when:** a slow client and a stream of malformed requests do not create unbounded queues/goroutines, and regular participants reconnect after a temporary failure.
 
-## Шаг 10. Наблюдаемость и измерения
+## Step 10. Observability and measurements
 
-- [ ] Добавить метрики активных сокетов, соединений с БД, длительности запросов, commit→событие, глубины очередей, задержки outbox и TTL-очистки.
-- [ ] Не использовать токены, room_id или user_id как labels; контролировать число временных рядов.
-- [ ] Добавить структурированные логи системных ошибок с correlation ID без содержимого переписки.
-- [ ] Открывать pprof только на отдельном административном интерфейсе.
-- [ ] Подготовить воспроизводимые нагрузки: спокойные комнаты, массовая отправка, медленные клиенты, серия reconnect, длительный прогон.
-- [ ] Снимать p50/p95/p99, ошибки, память, горутины, CPU и нагрузку БД; проверять возвращение числа горутин к норме после ухода клиентов.
-- [ ] Зафиксировать оборудование, версии, параметры и точку насыщения в `docs/PERFORMANCE.md`; целевые лимиты выбирать по результатам, а не объявлять заранее.
+- [ ] Add metrics for active sockets, DB connections, request duration, commit→event, queue depth, outbox delay and TTL cleanup.
+- [ ] Do not use tokens, room_id or user_id as labels; keep the number of time series under control.
+- [ ] Add structured logs of system errors with a correlation ID and no conversation content.
+- [ ] Expose pprof only on a separate administrative interface.
+- [ ] Prepare reproducible loads: quiet rooms, mass sending, slow clients, a series of reconnects, a long run.
+- [ ] Capture p50/p95/p99, errors, memory, goroutines, CPU and DB load; check that the goroutine count returns to normal after clients leave.
+- [ ] Record the hardware, versions, parameters and saturation point in `docs/PERFORMANCE.md`; choose target limits from the results rather than announcing them in advance.
 
-**Готово, когда:** результаты можно повторить и объяснить, что первым ограничивает систему. Оптимизации выносятся в отдельные изменения с измерением до/после.
+**Done when:** the results can be reproduced and it can be explained what limits the system first. Optimizations go into separate changes with before/after measurements.
 
-## Шаг 11. Воспроизводимые проверки в CI
+## Step 11. Reproducible checks in CI
 
-Этот шаг объединяет уже добавленные тесты; он не заменяет проверки в шагах 2–10.
+This step brings together the tests already added; it does not replace the checks in steps 2–10.
 
-- [ ] Запускать unit/contract/integration тесты, race, vet и сборку на чистом окружении с PostgreSQL.
-- [ ] Проверять миграции на пустой БД и обновление с предыдущей схемы.
-- [ ] Автоматизировать браузерный сценарий: create → join → сообщения → reload → повтор приглашения → end/TTL.
-- [ ] Добавить управляемые сбои БД/процесса и проверку commit-before-ack; не подменять их одними моками.
-- [ ] Проверять сборку контейнера и readiness после `docker compose up`.
-- [ ] Сохранять отчёты и скриншоты только с синтетическими данными; исключить credentials из публичных артефактов.
+- [ ] Run unit/contract/integration tests, race, vet and the build on a clean environment with PostgreSQL.
+- [ ] Check migrations on an empty DB and an upgrade from the previous schema.
+- [ ] Automate the browser scenario: create → join → messages → reload → invite reuse → end/TTL.
+- [ ] Add controlled DB/process failures and a commit-before-ack check; do not replace them with mocks alone.
+- [ ] Check the container build and readiness after `docker compose up`.
+- [ ] Keep reports and screenshots with synthetic data only; exclude credentials from public artifacts.
 
-**Готово, когда:** pull request получает воспроизводимый результат на чистой машине, а запуск CI не зависит от локального кэша или ручной подготовки БД.
+**Done when:** a pull request gets a reproducible result on a clean machine, and the CI run does not depend on a local cache or manual DB preparation.
 
-## Шаг 12. Подготовить версию для портфолио
+## Step 12. Prepare the portfolio version
 
-- [ ] Подготовить HTTPS reverse proxy, окружение и инструкцию развёртывания; проверить проксирование WebSocket и политику логов.
-- [ ] Запустить сервис с проверенными лимитами и readiness; предусмотреть воспроизводимый перезапуск и совместимые миграции при обновлении.
-- [ ] Обновить README: цель, быстрый запуск, схема архитектуры, демонстрация, проверки, гарантии и ограничения.
-- [ ] Добавить короткие ADR о PostgreSQL, дедупликации, outbox, сессиях и причинах сохранения монолита.
-- [ ] Записать короткое демо, где видны два браузера, сетевой обрыв/рестарт и восстановление переписки.
-- [ ] Опубликовать результаты нагрузки с условиями измерения и описанием оставшихся ограничений.
+- [ ] Prepare an HTTPS reverse proxy, the environment and deployment instructions; verify WebSocket proxying and the logging policy.
+- [ ] Run the service with verified limits and readiness; provide a reproducible restart and compatible migrations on upgrade.
+- [ ] Update the README: goal, quick start, architecture diagram, demo, checks, guarantees and limitations.
+- [ ] Add short ADRs on PostgreSQL, deduplication, outbox, sessions and the reasons for keeping the monolith.
+- [ ] Record a short demo showing two browsers, a network drop/restart and conversation recovery.
+- [ ] Publish the load results with the measurement conditions and a description of the remaining limitations.
 
-**Готово, когда:** другой разработчик запускает проект по README, а по репозиторию понятно, какие инженерные задачи решены и чем подтверждена корректность.
+**Done when:** another developer runs the project from the README, and the repository makes it clear which engineering problems were solved and what confirms correctness.
 
-**Контрольная точка 0.3:** проект уже пригоден для портфолио. Два микросервиса не являются обязательным условием публикации.
+**Checkpoint 0.3:** the project is now fit for a portfolio. Two microservices are not a prerequisite for publication.
 
-## Шаг 13. Выделить два сервиса как отдельный эксперимент
+## Step 13. Extract two services as a separate experiment
 
-**Начинать после:** версии 0.3 и ADR с целью разделения. Предлагаемая цель — независимое управление WebSocket-соединениями и изучение межсервисных сбоев.
+**Start after:** version 0.3 and an ADR stating the goal of the split. The proposed goal is independent management of WebSocket connections and studying inter-service failures.
 
 ```mermaid
 flowchart LR
-    Browser[Браузер] <-->|HTTP / WebSocket| Gateway[Realtime gateway]
+    Browser[Browser] <-->|HTTP / WebSocket| Gateway[Realtime gateway]
     Gateway <-->|gRPC commands / event stream| Core[Chat core]
-    Core --> DB[(PostgreSQL и журнал событий)]
+    Core --> DB[(PostgreSQL and event log)]
 ```
 
-- [ ] Gateway владеет внешним транспортом, heartbeat, очередями и транспортными лимитами; не читает БД напрямую.
-- [ ] Core владеет комнатами, сессиями, TTL, сообщениями, транзакциями и журналом событий; повторно проверяет полномочия команд.
-- [ ] Описать protobuf-контракты команд и server-streaming событий, ошибки, ограничения размеров и совместимость версий.
-- [ ] Пробрасывать deadlines/cancellation; retries только для операций с определённой идемпотентностью и с прежними ключами.
-- [ ] Аутентифицировать gateway перед core; не выставлять внутреннее API публично без защиты.
-- [ ] Реализовать replay по курсору и backpressure потока; отставание одного gateway не должно блокировать остальных.
-- [ ] Начать с одного core и двух gateway. События комнаты должны доходить до обоих gateway с подключёнными участниками, а не распределяться между ними как задания очереди.
-- [ ] Не добавлять брокер вместе с первым выделением. Если он понадобится, отдельно определить fan-out, доставку, retention и взаимодействие с outbox.
+- [ ] The gateway owns the external transport, heartbeat, queues and transport limits; it does not read the DB directly.
+- [ ] The core owns rooms, sessions, TTL, messages, transactions and the event log; it re-checks command permissions.
+- [ ] Describe the protobuf contracts for commands and server-streaming events, errors, size limits and version compatibility.
+- [ ] Propagate deadlines/cancellation; retries only for operations with defined idempotency and with the same keys.
+- [ ] Authenticate the gateway to the core; do not expose the internal API publicly without protection.
+- [ ] Implement cursor-based replay and stream backpressure; one lagging gateway must not block the others.
+- [ ] Start with one core and two gateways. Room events must reach both gateways with connected participants, not be distributed between them like queue jobs.
+- [ ] Do not add a broker together with the first split. If one is needed, separately define fan-out, delivery, retention and interaction with the outbox.
 
-**Готово, когда:** два участника на разных gateway общаются, остановка одного gateway не завершает комнату, а его клиенты восстанавливаются через другой с прежними сессиями.
+**Done when:** two participants on different gateways can talk, stopping one gateway does not end the room, and its clients recover through the other one with their existing sessions.
 
-## Шаг 14. Проверить распределённые отказы и оценить пользу разделения
+## Step 14. Test distributed failures and assess the benefit of the split
 
-- [ ] Остановить gateway во время отправки; проверить повтор без дубликата после reconnect.
-- [ ] Остановить core после commit до ответа; проверить восстановление результата и событий.
-- [ ] Оборвать gateway↔core при работающем browser↔gateway; UI не должен показывать ложное состояние готовности к отправке.
-- [ ] Замедлить event stream, создать повторы и разрыв курсора; проверить ограниченную память и корректный replay.
-- [ ] Проверить несовместимый контракт и истёкший межсервисный deadline.
-- [ ] Повторить нагрузку из шага 10 на том же оборудовании; сравнить задержки, ресурсы, пределы и стоимость эксплуатации.
-- [ ] Записать вывод: что улучшилось, какие новые отказы появились и стоит ли сохранять разделение.
+- [ ] Stop a gateway during a send; check a retry without a duplicate after reconnect.
+- [ ] Stop the core after commit before the response; check recovery of the result and events.
+- [ ] Break gateway↔core while browser↔gateway is working; the UI must not show a false ready-to-send state.
+- [ ] Slow down the event stream, create replays and a cursor gap; check bounded memory and correct replay.
+- [ ] Check an incompatible contract and an expired inter-service deadline.
+- [ ] Repeat the load from step 10 on the same hardware; compare latency, resources, limits and operating cost.
+- [ ] Write down the conclusion: what improved, what new failures appeared and whether the split is worth keeping.
 
-**Готово, когда:** есть работающие failure-сценарии и сравнение с монолитом. Несколько экземпляров core требуют отдельного проекта общей доставки/владения комнатами и пока не считаются поддерживаемыми.
+**Done when:** there are working failure scenarios and a comparison with the monolith. Multiple core instances require a separate design for shared delivery/room ownership and are not considered supported for now.
 
-## Как превращать план в изменения
+## How to turn the plan into changes
 
-Один шаг — самостоятельный результат; крупные шаги 5, 6 и 8 разбивать на несколько PR, которые сохраняют работоспособность приложения. Не смешивать перенос файлов, изменение протокола и подключение БД в одном большом diff.
+One step is a self-contained result; split the large steps 5, 6 and 8 into several PRs that keep the application working. Do not mix moving files, protocol changes and DB integration in one big diff.
 
-Первый набор изменений:
+The first set of changes:
 
-1. **PR 1:** целевые гарантии, состояния и коды ошибок — шаг 1.
-2. **PR 2:** failed-сообщения и безопасный повтор в UI — шаг 2.
-3. **PR 3:** прикладные порты, memory-адаптер и разделение подписок — шаг 3.
-4. **PR 4:** PostgreSQL в Compose, конфигурация, миграции, readiness и тестовая БД — шаг 4.
-5. **PR 5–7:** транзакционные create/join, безопасный replay credentials и запись сообщений — шаг 5.
-6. **Следующие PR:** события, рестарт/TTL и cursor по шагам 6–8, затем контрольная точка 0.2.
+1. **PR 1:** target guarantees, states and error codes — step 1.
+2. **PR 2:** failed messages and safe retry in the UI — step 2.
+3. **PR 3:** application ports, memory adapter and splitting out subscriptions — step 3.
+4. **PR 4:** PostgreSQL in Compose, configuration, migrations, readiness and the test DB — step 4.
+5. **PR 5–7:** transactional create/join, safe replay of credentials and message writes — step 5.
+6. **Following PRs:** events, restart/TTL and cursor for steps 6–8, then checkpoint 0.2.
 
-Для каждого изменения фиксировать: проблему и новое поведение, затронутый контракт, миграции, доказательство корректности и ограничения. Чекбокс отмечать только после выполнения критерия готовности, а не после создания файлов.
+For each change, record: the problem and the new behavior, the affected contract, migrations, proof of correctness and limitations. Tick a checkbox only after the completion criterion is met, not after the files are created.
 
-Календарные оценки здесь намеренно не заданы: они зависят от доступного времени и того, какие части будут изучаться впервые. Оценивать следующий небольшой шаг после завершения предыдущего; архитектурное разделение не должно задерживать готовую версию монолита.
+Calendar estimates are intentionally not given here: they depend on available time and on which parts are being learned for the first time. Estimate the next small step after the previous one is finished; the architectural split must not delay the finished monolith version.

@@ -1,89 +1,89 @@
-# Архитектура nullchat
+# nullchat architecture
 
-## Решение 001: собственный Go-сервис вместо Matrix
+## Decision 001: a custom Go service instead of Matrix
 
-Для временных комнат не нужны федерация и совместимость с Matrix-клиентами. Собственная реализация делает конкурентность, доставку и жизненный цикл центральной частью портфолио. Цена решения — эти правила и их корректность теперь нужно реализовывать и проверять самостоятельно.
+Ephemeral rooms need neither federation nor compatibility with Matrix clients. A custom implementation makes concurrency, delivery and lifecycle the centerpiece of the portfolio. The cost of this decision is that these rules and their correctness now have to be implemented and verified by the project itself.
 
-## Решение 002: сначала один процесс
+## Decision 002: a single process first
 
 ```mermaid
 flowchart LR
-    A[Браузер: HTML / CSS / JS] <-->|HTTP и WebSocket| B[httpapi: транспорт]
-    B --> C[chat.Application: порт сценариев]
-    C --> D[storage/postgres: транзакции и история]
+    A[Browser: HTML / CSS / JS] <-->|HTTP and WebSocket| B[httpapi: transport]
+    B --> C[chat.Application: scenario port]
+    C --> D[storage/postgres: transactions and history]
     D --> DB[(PostgreSQL)]
-    D --> E[realtime: Hub и подписки]
+    D --> E[realtime: Hub and subscriptions]
     E --> B
 ```
 
-`cmd/server` собирает зависимости: загружает конфигурацию, открывает `pgxpool` с `DB_MAX_CONNS`, проверяет соединение в пределах `DB_OPERATION_TIMEOUT` и создаёт PostgreSQL-сервис. Миграции запускаются явно через `cmd/migrate`; API-процесс никогда не применяет их автоматически. `chat` не импортирует транспортные библиотеки; `httpapi.Chat` — локальное имя порта `chat.Application`.
+`cmd/server` wires the dependencies: it loads the configuration, opens a `pgxpool` with `DB_MAX_CONNS`, checks the connection within `DB_OPERATION_TIMEOUT` and creates the PostgreSQL service. Migrations are run explicitly via `cmd/migrate`; the API process never applies them automatically. `chat` does not import transport libraries; `httpapi.Chat` is the local name of the `chat.Application` port.
 
-`chat` содержит прикладные типы, ошибки и порт `Application`; активный адаптер — `internal/storage/postgres`. `internal/storage/memory` остаётся вспомогательным адаптером для тестов. HTTP/WebSocket зависят только от порта и не знают SQL или `pgxpool`. Сценарии PostgreSQL владеют транзакционной атомарностью: интерфейс из `GetRoom`/`SaveRoom` не должен позволять случайно разнести проверку лимита и занятие места.
+`chat` contains the application types, errors and the `Application` port; the active adapter is `internal/storage/postgres`. `internal/storage/memory` remains an auxiliary adapter for tests. HTTP/WebSocket depend only on the port and know nothing about SQL or `pgxpool`. The PostgreSQL scenarios own transactional atomicity: an interface made of `GetRoom`/`SaveRoom` must not make it possible to accidentally split the limit check from taking the seat.
 
-Транзакции сериализуют изменения блокировкой строки комнаты. Subscribe удерживает share-lock при чтении снимка и регистрации подписки; записи берут update-lock. Короткий mutex сервиса координирует commit/публикацию и регистрацию snapshot, поэтому между snapshot и live-потоком нет разрыва в работающем процессе. `internal/realtime` владеет ограниченными очередями, лимитом подписок на сессию и закрытием подписчиков; сетевой I/O не выполняется под mutex приложения. Поддерживается один экземпляр сервиса; это не заявка на горизонтальное масштабирование.
+Transactions serialize changes with a lock on the room row. Subscribe holds a share lock while reading the snapshot and registering the subscription; writes take an update lock. A short service mutex coordinates commit/publication and snapshot registration, so there is no gap between the snapshot and the live stream in a running process. `internal/realtime` owns the bounded queues, the per-session subscription limit and closing subscribers; network I/O is not performed under the application mutex. A single service instance is supported; this is not a claim of horizontal scaling.
 
-Каждое соединение имеет цикл чтения и цикл событий с heartbeat. Используемая библиотека `coder/websocket` допускает конкурентные записи, поэтому ack и broadcast могут менять порядок; прикладной `sequence` задаёт порядок сообщений. Уход клиента отменяет контекст и завершает reader; upgraded-соединения отдельно закрываются при shutdown.
+Each connection has a reader loop and an event loop with heartbeat. The `coder/websocket` library in use allows concurrent writes, so acks and broadcasts can be reordered; the application-level `sequence` defines message order. A client leaving cancels the context and ends the reader; upgraded connections are closed separately on shutdown.
 
-## Решение 003: прикладные границы и realtime
+## Decision 003: application boundaries and realtime
 
-Транспорт зависит от `chat.Application` — небольшого порта сценариев с `context.Context`: create, join, subscribe, send, end и ready. Порт описывает атомарные операции, а не примитивы `GetRoom`/`SaveRoom`, которые могли бы разнести проверку доступа и изменение состояния. `/healthz` проверяет только liveness процесса и не обращается к БД; `/readyz` вызывает `Ready`, который пингует пул. При сбое БД readiness и прикладные операции возвращают стабильный `database_unavailable` без текста ошибок драйвера.
+The transport depends on `chat.Application`, a small scenario port with `context.Context`: create, join, subscribe, send, end and ready. The port describes atomic operations, not `GetRoom`/`SaveRoom` primitives that could split the access check from the state change. `/healthz` checks only process liveness and does not touch the DB; `/readyz` calls `Ready`, which pings the pool. On a DB failure, readiness and application operations return a stable `database_unavailable` without driver error text.
 
-Подписки и backpressure выделены в `internal/realtime`. Hub получает только стабильные ключи комнаты/сессии и события, поэтому не знает о HTTP, WebSocket или структуре хранения. Доставка через Hub — best-effort после commit; transactional outbox и durable replay пока отсутствуют. Сбой между commit и broadcast компенсируется полным снимком подтверждённой истории при reconnect.
+Subscriptions and backpressure are extracted into `internal/realtime`. The Hub receives only stable room/session keys and events, so it knows nothing about HTTP, WebSocket or the storage structure. Delivery through the Hub is best-effort after commit; there is no transactional outbox or durable replay yet. A failure between commit and broadcast is compensated by a full snapshot of the acknowledged history on reconnect.
 
-## Решение 004: жизненный цикл и восстановление
+## Decision 004: lifecycle and recovery
 
-Комнаты, участники, сессии, приглашения и подтверждённые сообщения хранятся в PostgreSQL и переживают рестарт backend. Graceful shutdown останавливает HTTP/WebSocket и expiry worker, затем вызывает `Service.Close` только для освобождения подписок Hub и закрывает пул. Shutdown — исключительно остановка инфраструктуры: он не вызывает `End`, не меняет статус комнаты и не отзывает credentials. Перед WebSocket close `1001` сервер отправляет JSON-событие `server_shutdown`; браузер сохраняет сессию и планирует reconnect через `onclose`.
+Rooms, participants, sessions, invites and acknowledged messages are stored in PostgreSQL and survive a backend restart. Graceful shutdown stops HTTP/WebSocket and the expiry worker, then calls `Service.Close` only to release Hub subscriptions, and closes the pool. Shutdown is purely an infrastructure stop: it does not call `End`, does not change the room status and does not revoke credentials. Before WebSocket close `1001` the server sends a JSON `server_shutdown` event; the browser keeps the session and schedules a reconnect via `onclose`.
 
-`End` по явному действию участника и `Expire` по TTL выполняют постоянное логическое закрытие в транзакции: меняют статус комнаты, отзывают сессии и приглашение, а после commit публикуют `room_closed` или `room_expired`. В том же цикле worker отдельный атомарный `DELETE` удаляет строки `idempotency_requests`, чей `expires_at` уже наступил; отделение от room-lock транзакций сохраняет единый порядок блокировок с replay. До удаления replay недоступен, после удаления ключ снова считается новым. Expiry выполняется при старте и каждые `EXPIRY_INTERVAL`, с deadline `DB_OPERATION_TIMEOUT`; сбой повторяется на следующем тике. Каждый защищённый сценарий независимо проверяет срок доступа, поэтому остановленный worker не продлевает TTL.
+`End` on an explicit participant action and `Expire` on TTL perform a permanent logical close in a transaction: they change the room status, revoke the sessions and the invite, and after commit publish `room_closed` or `room_expired`. In the same worker cycle, a separate atomic `DELETE` removes `idempotency_requests` rows whose `expires_at` has passed; keeping it apart from the room-lock transactions preserves a single lock order with replay. Before deletion replay is unavailable; after deletion the key is treated as new again. Expiry runs at startup and every `EXPIRY_INTERVAL`, with a `DB_OPERATION_TIMEOUT` deadline; a failure is retried on the next tick. Each protected scenario checks the access expiry independently, so a stopped worker does not extend the TTL.
 
-TTL начинается при создании и не продлевается активностью. Закрытие вкладки не освобождает место. Любой участник может завершить разговор. Эти правила не зависят от того, подключён ли в данный момент WebSocket. Display name генерируется backend случайно из английского набора и уникален внутри комнаты; прикладные сценарии не зависят от фиксированных имён.
+TTL starts at creation and is not extended by activity. Closing the tab does not free the seat. Any participant can end the conversation. These rules do not depend on whether a WebSocket is currently connected. The display name is generated randomly by the backend from an English set and is unique within a room; application scenarios do not depend on fixed names.
 
-На уровне клиента состояния `connecting`, `connected`, `reconnecting`, `expired`, `closed` и `unavailable` различают временную потерю транспорта, окончательно отозванный доступ и недоступность backend/БД. Временные состояния не удаляют сохранённую сессию. Ошибка отправки оставляет сообщение для повтора с прежним `client_message_id`.
+On the client side, the states `connecting`, `connected`, `reconnecting`, `expired`, `closed` and `unavailable` distinguish a temporary transport loss, finally revoked access and backend/DB unavailability. Temporary states do not delete the saved session. A send error keeps the message for a retry with the same `client_message_id`.
 
-Ошибки ресурсов также разделены по причине: заполненная комната, лимит сообщений, лимит соединений, частота запросов и недоступная БД имеют разные стабильные коды. Это часть внешнего контракта, а не только текст логов.
+Resource errors are also split by cause: full room, message limit, connection limit, request rate and unavailable DB have different stable codes. This is part of the external contract, not just log text.
 
-## Решение 005: PostgreSQL и границы гарантий
+## Decision 005: PostgreSQL and the limits of the guarantees
 
-Сущности: `rooms`, `participants`, `sessions`, `invites`, `messages`, `idempotency_requests`. Токены хранятся как SHA-256 хеши. Уникальность `(room_id, participant_id, client_message_id)` обеспечивает дедупликацию. Вход атомарно использует приглашение и регистрирует гостя; отправка проверяет TTL, выделяет sequence и записывает сообщение.
+Entities: `rooms`, `participants`, `sessions`, `invites`, `messages`, `idempotency_requests`. Tokens are stored as SHA-256 hashes. Uniqueness of `(room_id, participant_id, client_message_id)` provides deduplication. Join atomically uses the invite and registers the guest; send checks the TTL, allocates a sequence and writes the message.
 
-Ack после commit означает принятие в PostgreSQL в пределах его настроек durability. Это не подтверждение доставки собеседнику или прочтения. Сейчас reconnect получает полный snapshot из БД через новый пул/сервис; history cursor, pagination и transactional outbox требуют отдельного дизайна.
+An ack after commit means acceptance by PostgreSQL within its durability settings. It is not a confirmation of delivery to the contact or of reading. Currently a reconnect gets a full snapshot from the DB through a new pool/service; a history cursor, pagination and a transactional outbox need a separate design.
 
-Идемпотентность create/join по `Idempotency-Key` возвращает тот же результат после потери HTTP-ответа, включая credentials, в ограниченном окне и после проверки отпечатка исходного запроса. Ответ хранится зашифрованным AES-GCM с ключом deployment; открытые токены и ключ не попадают в логи.
+Create/join idempotency via `Idempotency-Key` returns the same result after a lost HTTP response, including credentials, within a limited window and after checking the fingerprint of the original request. The response is stored encrypted with AES-GCM using the deployment key; plaintext tokens and the key do not end up in logs.
 
-Целевые лимиты хранения версии 0.2: данные комнаты и события — до TTL плюс 24 часа на очистку; запись идемпотентности — до конца комнаты и максимум 24 часа после запроса. Retention основной БД не означает немедленное удаление из WAL и резервных копий — это описывается отдельно.
+Target retention limits for version 0.2: room data and events — up to the TTL plus 24 hours for cleanup; an idempotency record — until the room ends and at most 24 hours after the request. Retention in the primary DB does not mean immediate deletion from WAL and backups; that is described separately.
 
-Логическое закрытие по TTL и физическое удаление истёкших idempotency envelopes реализованы и повторяемы. Физическая очистка остальных строк комнаты, история и политика WAL/резервных копий остаются отдельной задачей; expiry worker не обещает удаления всей комнаты через 24 часа.
+Logical closing on TTL and physical deletion of expired idempotency envelopes are implemented and repeatable. Physical cleanup of the remaining room rows, history and the WAL/backup policy remain a separate task; the expiry worker does not promise deletion of the whole room after 24 hours.
 
-## Решение 006: сквозное шифрование в браузере
+## Decision 006: end-to-end encryption in the browser
 
-Добавлено по прямому запросу вне последовательности шагов плана. Подробный протокол — в [дизайне](superpowers/specs/2026-11-06-e2ee-design.md).
+Added on direct request, outside the sequence of plan steps. The detailed protocol is in the [design](superpowers/specs/2026-11-06-e2ee-design.md).
 
-Рассмотренные варианты:
+Options considered:
 
-- **Ключ во фрагменте ссылки** (как PrivateBin, Excalidraw). Прост, но ссылка и есть ключ: утечка ссылки вместе с данными сервера раскрывает всю историю, прямой секретности нет.
-- **PAKE по короткому паролю** (SPAKE2/CPace, как magic-wormhole). Позволяет обойтись только паролем, но WebCrypto не даёт нужной арифметики на кривых — понадобилась бы внешняя JS-библиотека, а у проекта нет frontend-зависимостей.
-- **Выбрано:** эфемерный ECDH P-256, доли которого подписаны HMAC-ключом из секрета ссылки и необязательного пароля (PBKDF2). Сервер не может подменить ключи, утечка ссылки после разговора не раскрывает сообщений, пароль защищает от перехвата ссылки. Всё — на встроенном WebCrypto.
+- **Key in the link fragment** (like PrivateBin, Excalidraw). Simple, but the link is the key: a leaked link together with the server's data reveals the whole history; there is no forward secrecy.
+- **PAKE over a short password** (SPAKE2/CPace, like magic-wormhole). Makes it possible to get by with a password alone, but WebCrypto does not provide the required curve arithmetic — an external JS library would be needed, and the project has no frontend dependencies.
+- **Chosen:** ephemeral ECDH P-256, whose shares are signed with an HMAC key derived from the link secret and an optional password (PBKDF2). The server cannot substitute keys, a link leaked after the conversation does not reveal messages, and the password protects against an intercepted link. Everything runs on built-in WebCrypto.
 
-Следствия для сервера: `chat` проверяет только форму непрозрачных полей (`envelope.go`), дедупликация сравнивает шифротексты, у участника появляются `role` и `key_share`. Пароль проверяется без раскрытия: сервер хранит SHA-256 от verifier, в который зашит секрет ссылки, поэтому перебирать пароль ему не с чем; неверный proof не расходует приглашение, пятая неудача аннулирует его. Писать до входа гостя нельзя — общего ключа ещё нет.
+Consequences for the server: `chat` checks only the shape of the opaque fields (`envelope.go`), deduplication compares ciphertexts, and a participant gains `role` and `key_share`. The password is verified without disclosure: the server stores a SHA-256 of a verifier that embeds the link secret, so it has nothing to brute-force the password against; a wrong proof does not consume the invite, and the fifth failure revokes it. Writing before the guest joins is not possible: there is no shared key yet.
 
-Защита клиента: CSP с Trusted Types без политик, неизвлекаемые ключи в IndexedDB вместо `sessionStorage`, изоляционные заголовки, манифест хешей фронтенда (`cmd/webhash`). Фундаментальное ограничение веб-E2EE остаётся: код шифрования отдаёт тот же сервер. Манифест позволяет обнаружить подмену, но не предотвратить её.
+Client protection: CSP with Trusted Types and no policies, non-extractable keys in IndexedDB instead of `sessionStorage`, isolation headers, a manifest of frontend hashes (`cmd/webhash`). The fundamental limitation of web E2EE remains: the encryption code is served by the same server. The manifest makes it possible to detect tampering, but not to prevent it.
 
-## Возможные два сервиса позже
+## Possible two services later
 
-Учебный вариант — выделить управление соединениями:
+The learning option is to extract connection management:
 
 ```mermaid
 flowchart LR
-    Browser[Браузер] <-->|HTTP / WebSocket| Gateway[Realtime gateway]
-    Gateway <-->|gRPC: команды и поток событий| Core[Chat service]
+    Browser[Browser] <-->|HTTP / WebSocket| Gateway[Realtime gateway]
+    Gateway <-->|gRPC: commands and event stream| Core[Chat service]
     Core --> DB[(PostgreSQL)]
 ```
 
-- **Realtime gateway:** соединения, Origin, heartbeat, лимиты транспортных ресурсов, доставка в браузер.
-- **Chat service:** доступ, комнаты, приглашения, TTL, сообщения и единственное владение БД.
+- **Realtime gateway:** connections, Origin, heartbeat, transport resource limits, delivery to the browser.
+- **Chat service:** access, rooms, invites, TTL, messages and sole ownership of the DB.
 
-Первый эксперимент можно провести через unary gRPC-команды и server-streaming событий, не добавляя брокер одновременно. Это гипотеза для будущего этапа, не принятое обязательство по стеку. Нужны контракты, deadlines, повтор команд с прежними ID, восстановление потока с cursor и поведение при недоступном core.
+The first experiment can use unary gRPC commands and server-streaming events without adding a broker at the same time. This is a hypothesis for a future stage, not a committed stack decision. It needs contracts, deadlines, command retries with the same IDs, cursor-based stream recovery and behavior when the core is unavailable.
 
-Простое выделение HTTP-обработчиков в другой процесс не решит масштабирование. Несколько core-экземпляров потребуют общей доставки событий/владения комнатами. NATS или другой брокер стоит выбирать только после фиксации гарантий; outbox нужен, если обещаем надёжную публикацию событий из транзакций БД.
+Simply moving the HTTP handlers into another process will not solve scaling. Multiple core instances will require shared event delivery/room ownership. NATS or another broker should be chosen only after the guarantees are pinned down; an outbox is needed if we promise reliable publication of events from DB transactions.
 
-Критерий начала: есть работающий монолит с PostgreSQL, интеграционные тесты и измерения; можно объяснить, какую задачу решает независимое масштабирование соединений или какую распределённую семантику изучаем. Для портфолио следует показать измеренный эффект и новые режимы отказа.
+Criterion for starting: there is a working monolith with PostgreSQL, integration tests and measurements; it can be explained which problem independent connection scaling solves or which distributed semantics we are studying. For the portfolio, the measured effect and the new failure modes should be shown.

@@ -12,7 +12,7 @@ func TestFrontendStaticAccessibilityContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(html), `aria-label="n_nullchat. — на главную"`) {
+	if !strings.Contains(string(html), `aria-label="n_nullchat. — home"`) {
 		t.Error("brand accessible name does not include its visible text")
 	}
 
@@ -92,7 +92,7 @@ func TestFrontendSuccessfulManualRetryClearsStaleError(t *testing.T) {
 	}
 	queue := text[strings.Index(text, "function enqueue("):]
 	queue = queue[:strings.Index(queue, "\nfunction ")]
-	if !strings.Contains(queue, "if (transmit(entry, socket))") || !strings.Contains(queue, "else showError('chat-error', 'Сообщение не отправлено. Нажми «Повторить».');") {
+	if !strings.Contains(queue, "if (transmit(entry, socket))") || !strings.Contains(queue, "else showError('chat-error', 'Message not sent. Press “Retry”.');") {
 		t.Fatal("send queue does not surface failed transmissions")
 	}
 }
@@ -103,13 +103,13 @@ func TestFrontendCopyMatchesPersistenceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "История доступна участникам до закрытия комнаты. Сквозное шифрование: сервер видит только шифротекст.") {
+	if !strings.Contains(text, "History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.") {
 		t.Fatal("footer does not describe the persistence and encryption contract")
 	}
-	if strings.Contains(text, "Без E2EE") {
+	if strings.Contains(text, "No E2EE") {
 		t.Fatal("footer still claims there is no end-to-end encryption")
 	}
-	if strings.Contains(text, "история хранится в памяти") {
+	if strings.Contains(text, "history is kept in memory") {
 		t.Fatal("footer still describes in-memory history")
 	}
 }
@@ -122,9 +122,9 @@ func TestFrontendUsesOperationSpecificErrors(t *testing.T) {
 	text := string(source)
 	for _, required := range []string{
 		"async function api(path, data, token, key = '', errorOverrides = {})",
-		"errorOverrides[result.error] || errors[result.error] || 'Не удалось выполнить запрос. Попробуй ещё раз.'",
-		"api('/api/v1/rooms', request.body, '', request.key, { database_unavailable: 'Сервер временно недоступен. Комната не создана — попробуй ещё раз.' })",
-		"api('/api/v1/join', request.body, '', request.key, { invalid_input: 'Приглашение недействительно. Проверь ссылку или попроси новую.' })",
+		"errorOverrides[result.error] || errors[result.error] || 'The request failed. Please try again.'",
+		"api('/api/v1/rooms', request.body, '', request.key, { database_unavailable: 'The server is temporarily unavailable. The room was not created, please try again.' })",
+		"api('/api/v1/join', request.body, '', request.key, { invalid_input: 'This invite is not valid. Check the link or ask for a new one.' })",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("frontend lacks operation-specific error contract: %q", required)
@@ -138,10 +138,10 @@ func TestFrontendRoomURLWithoutSessionUsesNeutralCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "Не удалось открыть комнату. Используй действующее приглашение или создай новую.") {
+	if !strings.Contains(text, "The room could not be opened. Use a valid invite or create a new room.") {
 		t.Fatal("room URL without local credentials lacks neutral recovery copy")
 	}
-	if strings.Contains(text, "В этой вкладке нет сессии комнаты") {
+	if strings.Contains(text, "This tab has no session for the room") {
 		t.Fatal("room URL still exposes missing sessionStorage as the recovery copy")
 	}
 }

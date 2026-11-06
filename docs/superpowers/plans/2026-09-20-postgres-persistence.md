@@ -72,12 +72,12 @@ Create `internal/chat/validation_test.go` with the exact boundary cases and upda
 
 ```go
 func TestNormalizeTitleAndMessage(t *testing.T) {
-    title, err := NormalizeTitle("  Вечер  ")
-    if err != nil || title != "Вечер" { t.Fatalf("title = %q, %v", title, err) }
+    title, err := NormalizeTitle("  Evening  ")
+    if err != nil || title != "Evening" { t.Fatalf("title = %q, %v", title, err) }
     empty, err := NormalizeTitle("  ")
     if err != nil || empty != "Quiet conversation" { t.Fatalf("empty = %q, %v", empty, err) }
-    body, err := NormalizeMessage("client-1", "  привет  ")
-    if err != nil || body != "привет" { t.Fatalf("body = %q, %v", body, err) }
+    body, err := NormalizeMessage("client-1", "  hello  ")
+    if err != nil || body != "hello" { t.Fatalf("body = %q, %v", body, err) }
     if _, err := NormalizeMessage("", "hello"); !errors.Is(err, ErrInput) { t.Fatal(err) }
     if _, err := NormalizeMessage("id", string(make([]byte, MaxTextBytes+1))); !errors.Is(err, ErrInput) { t.Fatal(err) }
 }
@@ -468,7 +468,7 @@ async function api(path, data, token, key = '') {
   const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
   const response = await fetch(path, { method: 'POST', headers, body: JSON.stringify(data), signal: AbortSignal.timeout(10000) });
   const result = await response.json();
-  if (!response.ok) throw new Error(errors[result.error] || 'Не удалось выполнить запрос. Попробуй ещё раз.');
+  if (!response.ok) throw new Error(errors[result.error] || 'The request failed. Please try again.');
   return result;
 }
 ```

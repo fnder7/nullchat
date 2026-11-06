@@ -1,60 +1,61 @@
 # UI regression report — 2026-09-27
 
 - Commit: `15d3b78`
-- Окружение: Docker Compose, PostgreSQL 17, локальный backend
-- Браузер: управляемый Chrome, независимые isolated contexts
-- Объем: полный P0 и P1 из `docs/UI_TEST_CASES.md`
+- Environment: Docker Compose, PostgreSQL 17, local backend
+- Browser: controlled Chrome, independent isolated contexts
+- Scope: full P0 and P1 from `docs/UI_TEST_CASES.md`
 
-## Итог
+## Summary
 
 - `PASS`: 56
 - `FAIL`: 7
 - `BLOCKED`: 0
-- Блокирующих потерю данных или доступ постороннего к комнате дефектов не найдено.
-- PostgreSQL persistence после restart backend и временного отказа БД работает.
-- Полные замечания: `docs/UI_TEST_FINDINGS.md` (`NC-UI-001`—`NC-UI-007`).
+- No defects causing data loss or giving an outsider access to a room were found.
+- PostgreSQL persistence works after a backend restart and a temporary DB outage.
+- Full findings: `docs/UI_TEST_FINDINGS.md` (`NC-UI-001`–`NC-UI-007`).
 
 ## P0
 
-| ID | Результат | Комментарий |
+| ID | Result | Comment |
 |---|---|---|
-| UI-01—UI-09 | PASS | Создание, два независимых участника, обмен, refresh, reconnect, restart backend, завершение и проверка консоли выполнены. Ошибки консоли во время намеренного offline/restart были ожидаемыми. |
+| UI-01—UI-09 | PASS | Creation, two independent participants, message exchange, refresh, reconnect, backend restart, ending and the console check were done. Console errors during the deliberate offline/restart were expected. |
 
 ## P1
 
-| Группа / ID | Результат | Комментарий |
+| Group / ID | Result | Comment |
 |---|---|---|
-| ROOM-01 | FAIL | Пустое название превращается в английское `Quiet conversation`, хотя весь UI и placeholder русские. |
-| ROOM-02—ROOM-04 | PASS | 60 символов принимаются; TTL 1/15/30/60 соответствует серверному `expires_at`; повтор с одним idempotency key возвращает ту же комнату и сессию. |
-| ROOM-05 | FAIL | Функционально 503 обработан, но create показывает «Сессия сохранена», хотя сессия еще не создана. |
-| JOIN-01—JOIN-03, JOIN-05—JOIN-06 | PASS | Вход, повтор join, запрет третьему участнику, отсутствие доступа по одному room URL и refresh работают. |
-| JOIN-04 | FAIL | Malformed invite показывает текст «Сообщение должно содержать от 1 до 4000 байт», не относящийся к приглашению. |
-| MSG-01—MSG-11 | PASS | Enter/Shift+Enter, пустой ввод, 4000-byte boundary, oversize, XSS, retry/dedup, порядок, persistence и лимит 500 проверены. 499 сообщений были подготовлены fixture в локальной БД; 500-е принято, 501-е получило `message_limit`. |
-| NET-01—NET-07 | PASS | Offline, auto/manual reconnect, pending message, restart backend и отказ БД проверены. |
-| NET-08 | FAIL | После восстановления БД retry сохраняет сообщение ровно один раз, но старый баннер `database_unavailable` остается до следующей обычной отправки. |
-| END-01—END-07 | PASS | Завершение обоими ролями, refresh, invite после закрытия, реальный TTL 1 минута и сохранение исходного `expires_at` работают. |
-| SEC-01—SEC-05 | PASS | Истории нет в `sessionStorage`; session удаляется; доступ без token отсутствует; внутренние DB-детали не показаны; title/message XSS не исполняется. |
-| PRIV-01—PRIV-02, PRIV-04 | PASS | Реальный и случайный room URL неразличимы; backend не запрашивается. Used/closed/random well-formed invite возвращают одинаковое публичное состояние. |
-| PRIV-03 | FAIL | Утечки нет, но malformed invite получает нерелевантную ошибку про сообщение. |
-| VIEW-01—VIEW-06 | PASS | Desktop/mobile `390x844`, keyboard focus/Enter, disabled states, длинный title и таймер проверены; горизонтального overflow нет. |
-| VIEW-07 | FAIL | Футер утверждает, что история хранится в памяти и теряется при restart backend; это противоречит текущей PostgreSQL persistence. |
-| VIEW-08 | FAIL | Lighthouse accessibility: 96/100, провалены `color-contrast` и `label-content-name-mismatch`. |
+| ROOM-01 | FAIL | An empty title becomes the English `Quiet conversation`, although the whole UI and the placeholder are in Russian. |
+| ROOM-02—ROOM-04 | PASS | 60 characters are accepted; TTL 1/15/30/60 matches the server's `expires_at`; a retry with the same idempotency key returns the same room and session. |
+| ROOM-05 | FAIL | The 503 is handled functionally, but create shows "Your session is saved" although no session has been created yet. |
+| JOIN-01—JOIN-03, JOIN-05—JOIN-06 | PASS | Joining, a join retry, refusing a third participant, no access via a room URL alone, and refresh work. |
+| JOIN-04 | FAIL | A malformed invite shows the text "A message must contain 1 to 4000 bytes", which has nothing to do with the invite. |
+| MSG-01—MSG-11 | PASS | Enter/Shift+Enter, empty input, the 4000-byte boundary, oversize, XSS, retry/dedup, ordering, persistence and the 500 limit were checked. 499 messages were prepared as a fixture in the local DB; the 500th was accepted, the 501st got `message_limit`. |
+| NET-01—NET-07 | PASS | Offline, auto/manual reconnect, a pending message, backend restart and a DB outage were checked. |
+| NET-08 | FAIL | After the DB recovers, retry saves the message exactly once, but the old `database_unavailable` banner stays until the next regular send. |
+| END-01—END-07 | PASS | Ending by both roles, refresh, the invite after closing, a real 1-minute TTL and keeping the original `expires_at` work. |
+| SEC-01—SEC-05 | PASS | No history in `sessionStorage`; the session is removed; no access without a token; internal DB details are not shown; title/message XSS does not execute. |
+| PRIV-01—PRIV-02, PRIV-04 | PASS | Real and random room URLs are indistinguishable; the backend is not queried. Used/closed/random well-formed invites return the same public state. |
+| PRIV-03 | FAIL | No leak, but a malformed invite gets an irrelevant error about the message. |
+| VIEW-01—VIEW-06 | PASS | Desktop/mobile `390x844`, keyboard focus/Enter, disabled states, a long title and the timer were checked; no horizontal overflow. |
+| VIEW-07 | FAIL | The footer claims history is kept in memory and lost on a backend restart; this contradicts the current PostgreSQL persistence. |
+| VIEW-08 | FAIL | Lighthouse accessibility: 96/100, `color-contrast` and `label-content-name-mismatch` failed. |
 
 ## Findings
 
-Детальные замечания, шаги воспроизведения и privacy-выводы вынесены в постоянный
-реестр `docs/UI_TEST_FINDINGS.md`. Этот файл хранит только результаты конкретного
-прогона.
+Detailed findings, reproduction steps and privacy conclusions are kept in the
+standing register `docs/UI_TEST_FINDINGS.md`. This file holds only the results of
+this particular run.
 
-## Автоматические проверки
+## Automated checks
 
-| Проверка | Результат |
+| Check | Result |
 |---|---|
 | `go test -race ./...` | PASS |
 | `go vet ./...` | PASS |
 | `node --check web/app.js` | PASS |
 | `docker compose run --rm test` | PASS (`internal/storage/postgres`, 17.645s) |
 
-## Состояние окружения
+## Environment state
 
-Тестовые `postgres` и `nullchat` оставлены запущенными; named volume не удалялся.
+The test `postgres` and `nullchat` were left running; the named volume was not
+deleted.

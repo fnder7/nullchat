@@ -1,19 +1,19 @@
 # UI test findings
 
-Постоянный реестр замечаний, найденных UI/E2E-прогонами. Разовые результаты и
-окружение находятся в `docs/test-reports/`; здесь хранятся стабильные finding ID,
-статус и воспроизведение.
+The standing register of issues found by UI/E2E runs. One-off results and
+environments live in `docs/test-reports/`; this file holds stable finding IDs,
+status and reproduction steps.
 
-Статусы: `Open`, `Resolved`, `Accepted`. Severity: `Critical`, `High`, `Medium`,
+Statuses: `Open`, `Resolved`, `Accepted`. Severity: `Critical`, `High`, `Medium`,
 `Low`.
 
 ## Open findings
 
-Нет. Все семь первоначальных замечаний проверены повторно 2026-09-27.
+None. All seven original findings were re-verified on 2026-09-27.
 
 ## Resolved findings
 
-### NC-UI-001 — футер описывает устаревшее хранение истории
+### NC-UI-001 — the footer describes an outdated history storage model
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -21,14 +21,14 @@
 - Severity: `Medium`
 - Cases: `VIEW-07`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: открыть главную или чат и прочитать текст футера.
-- Expected: текст соответствует PostgreSQL persistence и не обещает потерю
-  подтвержденной истории при restart backend.
-- Actual: футер сообщает, что история хранится в памяти до закрытия комнаты или
-  перезапуска сервера.
+- Steps: open the home page or the chat and read the footer text.
+- Expected: the text matches PostgreSQL persistence and does not promise that
+  confirmed history is lost on a backend restart.
+- Actual: the footer says history is kept in memory until the room closes or the
+  server restarts.
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.
 
-### NC-UI-002 — название комнаты по умолчанию выбивается из локали
+### NC-UI-002 — the default room title does not match the locale
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -36,12 +36,13 @@
 - Severity: `Low`
 - Cases: `ROOM-01`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: оставить название пустым и создать комнату.
-- Expected: русское нейтральное название, согласованное с placeholder и UI.
-- Actual: отображается `Quiet conversation`.
+- Steps: leave the title empty and create a room.
+- Expected: a neutral Russian title consistent with the placeholder and the UI
+  (the UI was in Russian at the time).
+- Actual: `Quiet conversation` is shown.
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.
 
-### NC-UI-003 — malformed invite получает ошибку про сообщение
+### NC-UI-003 — a malformed invite gets an error about the message
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -49,13 +50,12 @@
 - Severity: `Medium`
 - Cases: `JOIN-04`, `PRIV-03`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: открыть `/#invite=invalid-token` и нажать «Войти в комнату».
-- Expected: нейтральная ошибка о недействительном приглашении без сведений о
-  комнате.
-- Actual: «Проверь данные. Сообщение должно содержать от 1 до 4000 байт текста».
+- Steps: open `/#invite=invalid-token` and press "Join the room".
+- Expected: a neutral invalid-invite error without room details.
+- Actual: "Check your input. A message must contain 1 to 4000 bytes of text."
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.
 
-### NC-UI-004 — create при отказе БД говорит о несуществующей сессии
+### NC-UI-004 — create during a DB outage talks about a session that does not exist
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -63,13 +63,14 @@
 - Severity: `Low`
 - Cases: `ROOM-05`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: остановить PostgreSQL и попытаться создать комнату.
-- Expected: сообщение о временной недоступности и безопасном повторе создания.
-- Actual: «Сервер временно недоступен. Сессия сохранена, повтори позже», хотя
-  сессия еще не создана.
+- Steps: stop PostgreSQL and try to create a room.
+- Expected: a message about temporary unavailability and that retrying the create
+  is safe.
+- Actual: "The server is temporarily unavailable. Your session is saved, try
+  again later", although no session has been created yet.
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.
 
-### NC-UI-005 — успешный retry не скрывает старую ошибку БД
+### NC-UI-005 — a successful retry does not hide the old DB error
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -77,14 +78,15 @@
 - Severity: `Medium`
 - Cases: `NET-08`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: отправить сообщение при остановленной БД, вернуть PostgreSQL и нажать
-  «Повторить» у сообщения.
-- Expected: сообщение подтверждено ровно один раз, временная ошибка скрыта.
-- Actual: сообщение сохранено один раз, но баннер `database_unavailable` остается
-  до следующей обычной отправки.
+- Steps: send a message while the DB is stopped, bring PostgreSQL back and press
+  "Retry" on the message.
+- Expected: the message is confirmed exactly once and the temporary error is
+  hidden.
+- Actual: the message is saved once, but the `database_unavailable` banner stays
+  until the next regular send.
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.
 
-### NC-UI-006 — главная страница не проходит все accessibility audits
+### NC-UI-006 — the home page does not pass all accessibility audits
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -92,13 +94,13 @@
 - Severity: `Medium`
 - Cases: `VIEW-08`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: выполнить Lighthouse accessibility snapshot главной страницы.
-- Expected: нет failed accessibility audits.
-- Actual: score `96`; failed `color-contrast` для мелкого текста и
-  `label-content-name-mismatch` для логотипа.
+- Steps: run a Lighthouse accessibility snapshot of the home page.
+- Expected: no failed accessibility audits.
+- Actual: score `96`; failed `color-contrast` for small text and
+  `label-content-name-mismatch` for the logo.
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.
 
-### NC-UI-007 — текст без сессии может восприниматься как подтверждение комнаты
+### NC-UI-007 — the no-session text can be read as confirming the room exists
 
 - Status: `Resolved`
 - Verified: `2026-09-27`, commit `4f58e64`.
@@ -106,13 +108,13 @@
 - Severity: `Low`
 - Cases: `PRIV-01`, `PRIV-04`
 - Found: `2026-09-27`, commit `15d3b78`
-- Steps: в чистом browser context открыть существующий или случайный
-  `/#room=<64 hex>` без `sessionStorage`.
-- Expected: нейтральный текст, не подразумевающий существование конкретной
-  комнаты, например «Не удалось открыть комнату. Используй действующее
-  приглашение или создай новую».
-- Actual: «В этой вкладке нет сессии комнаты. Попроси новое приглашение или
-  создай свою комнату».
-- Security evidence: реальный и случайный room ID дают одинаковый результат и
-  не вызывают HTTP/WebSocket-запрос; фактическая enumeration не подтверждена.
+- Steps: in a clean browser context, open an existing or random
+  `/#room=<64 hex>` without `sessionStorage`.
+- Expected: a neutral text that does not imply a specific room exists, for
+  example "The room could not be opened. Use a valid invite or create a new
+  room."
+- Actual: "This tab has no session for the room. Ask for a new invite or create
+  your own room."
+- Security evidence: a real and a random room ID give the same result and do not
+  trigger an HTTP/WebSocket request; actual enumeration was not confirmed.
 - Evidence: `docs/test-reports/2026-09-27-ui-regression.md`.

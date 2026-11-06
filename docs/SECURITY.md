@@ -1,38 +1,38 @@
-# Безопасность: что видит каждый
+# Security: what each party sees
 
-Короткий ответ на вопрос «кто что может узнать о разговоре». Протокол и обоснования — в [дизайне E2EE](superpowers/specs/2026-11-06-e2ee-design.md), решение 006 — в [архитектуре](ARCHITECTURE.md).
+A short answer to "who can learn what about a conversation". The protocol and its rationale are in the [E2EE design](superpowers/specs/2026-11-06-e2ee-design.md), Decision 006 is in the [architecture](ARCHITECTURE.md).
 
-## Наблюдатели
+## Observers
 
-| Кто | Видит | Не видит | Может сделать |
+| Who | Sees | Does not see | Can do |
 |---|---|---|---|
-| **Сервер приложения** (код nullchat в памяти процесса) | Шифротексты сообщений и названия, открытые ECDH-ключи и их HMAC, SHA-256 от verifier входа, время сообщений, `sequence`, роли и случайные имена участников, факт входа и выхода, размер сообщения с точностью до блока 256 байт | Текст, название, пароль, секрет ссылки, ключ сообщений | Не доставить, задержать или удалить сообщение (повтор и перестановку клиент обнаружит, обрезку хвоста — нет). Отдать изменённый JavaScript — **главное ограничение веб-E2EE** |
-| **База данных** и её резервные копии | То же, что сервер, плюс SHA-256 токенов сессий и приглашений, зашифрованные (AES-GCM, ключ развёртывания) ответы идемпотентности | Открытые токены, текст, ключи | Строки закрытых комнат пока не удаляются физически ([план, этап C1](superpowers/plans/2026-11-06-competitor-hardening.md)) |
-| **Логи приложения** | Запуск, остановка, системные ошибки, класс ошибки БД (`sqlstate 42P01`) | Токены, тексты, IP: адреса в логе ошибок `net/http` заменяются на `<addr>` | — |
-| **Хостинг и его прокси** (Render) | IP клиента, время и объём запросов, TLS-завершение, свои журналы платформы | Содержимое сообщений (шифротекст и внутри TLS) | Это вне контроля приложения; при своём хостинге журналы reverse proxy нужно настраивать отдельно |
-| **Сетевой наблюдатель** до TLS | Что клиент обращается к сервису, время и размер TLS-кадров | Всё содержимое | Приложение не сжимает ни WebSocket, ни HTTP, а `Cache-Control: no-transform` просит прокси и CDN (граница Render) тоже не сжимать. Даже без этого BREACH здесь неприменим: токены в каждом ответе свежие, а учётные данные не передаются браузером автоматически, как cookie |
-| **Держатель ссылки без пароля** (если пароль задан) | Ничего: без пароля сервер не пускает (`join_proof_invalid`), после 5 неудач приглашение аннулируется | — | — |
-| **Держатель ссылки** (пароля нет) или **ссылки и пароля** | Может войти вместо гостя, пока приглашение не использовано. Настоящий гость увидит «приглашение использовано»; создатель обнаружит подмену, если сверит код голосом с настоящим собеседником | Сообщения уже закончившегося разговора: ключ выведен из эфемерного ECDH | — |
-| **Скрипт, попавший на страницу** (XSS, расширение) | Расшифрованную переписку на экране; может пользоваться ключами, пока вкладка открыта | Закрытый ключ ECDH и производные ключи — они неизвлекаемые (`extractable: false`) | Trusted Types без политик блокирует `innerHTML`, `eval` и строковые обработчики; внешних скриптов нет |
-| **Тот, кто получил устройство участника** | Ключи в IndexedDB до конца комнаты или до следующего открытия страницы; токен и счётчик в `sessionStorage` вкладки | Пароль (не сохраняется) | Переписка восстанавливается только пока комната открыта на сервере |
+| **Application server** (nullchat code in process memory) | Ciphertexts of messages and the title, public ECDH keys and their HMACs, SHA-256 of the join verifier, message times, `sequence`, participant roles and random names, the fact of joining and leaving, message size to within a 256-byte block | Text, title, password, link secret, message key | Fail to deliver, delay or delete a message (the client detects replay and reordering, but not truncation of the tail). Serve modified JavaScript: **the main limitation of web E2EE** |
+| **Database** and its backups | The same as the server, plus SHA-256 of session and invite tokens, idempotency responses encrypted with AES-GCM (deployment key) | Plain tokens, text, keys | Rows of closed rooms are not physically deleted yet ([plan, stage C1](superpowers/plans/2026-11-06-competitor-hardening.md)) |
+| **Application logs** | Startup, shutdown, system errors, database error class (`sqlstate 42P01`) | Tokens, texts, IPs: addresses in the `net/http` error log are replaced with `<addr>` | — |
+| **Hosting and its proxy** (Render) | Client IP, request times and volume, TLS termination, its own platform logs | Message contents (ciphertext, and inside TLS) | This is outside the application's control; when self-hosting, reverse proxy logs must be configured separately |
+| **Network observer** before TLS | That the client talks to the service, times and sizes of TLS records | All contents | The application itself never compresses WebSocket or HTTP and sends `Cache-Control: no-store, no-transform`. Render's edge nevertheless ignores `no-transform` and applies brotli to HTTP responses, including the create/join JSON with tokens (observed on 2026-11-07). BREACH still does not apply: every such response carries freshly generated tokens, so no secret repeats across responses, and credentials are not ambient (no cookies; the tokens are sent by the page's own JS). WebSocket traffic is not compressed |
+| **Holder of the link without the password** (if a password is set) | Nothing: without the password the server does not let them in (`join_proof_invalid`), after 5 failures the invite is revoked | — | — |
+| **Holder of the link** (no password) or **of the link and the password** | Can join in place of the guest while the invite is unused. The real guest will see "invite already used"; the creator will detect the substitution by comparing the code by voice with the real contact | Messages of a conversation that has already ended: the key is derived from ephemeral ECDH | — |
+| **Script injected into the page** (XSS, extension) | The decrypted conversation on screen; can use the keys while the tab is open | The private ECDH key and derived keys: they are non-extractable (`extractable: false`) | Trusted Types without policies blocks `innerHTML`, `eval` and string handlers; there are no external scripts |
+| **Someone who obtains a participant's device** | Keys in IndexedDB until the room ends or until the next page open; the token and counter in the tab's `sessionStorage` | The password (not stored) | The conversation can be recovered only while the room is open on the server |
 
-## Гигиена на стороне клиента
+## Client-side hygiene
 
-- Байтовые буферы обнуляются сразу после передачи в WebCrypto: пароль, байты PBKDF2-производной, декодированный секрет ссылки, сырые выходы HKDF, общий секрет ECDH, открытый текст сообщения и названия после шифрования и расшифровки.
-- Строки JavaScript стереть нельзя. Поэтому до успешного create/join в памяти страницы остаются пароль в поле ввода и base64-строка его производной в подготовленном запросе; у создателя до входа гостя — секрет ссылки в состоянии вкладки; расшифрованные тексты — в DOM, пока открыт разговор. Это best effort, а не гарантия стирания.
-- После входа гостя секрет ссылки удаляется и из `sessionStorage` создателя.
-- При завершении комнаты удаляется запись ключей в IndexedDB, обнуляется `roomSalt`.
+- Byte buffers are zeroed right after being passed to WebCrypto: the password, the bytes of the PBKDF2 derivation, the decoded link secret, raw HKDF outputs, the ECDH shared secret, the plaintext of a message and of the title after encryption and decryption.
+- JavaScript strings cannot be wiped. So until a successful create/join, the page memory keeps the password in the input field and the base64 string of its derivation in the prepared request; for the creator until the guest joins, the link secret in the tab state; decrypted texts in the DOM while the conversation is open. This is best effort, not a wiping guarantee.
+- After the guest joins, the link secret is also deleted from the creator's `sessionStorage`.
+- When the room ends, the key record in IndexedDB is deleted and `roomSalt` is zeroed.
 
-## Проверка развёрнутого кода
+## Verifying the deployed code
 
-`go run ./cmd/webhash` печатает SHA-256 каждого встроенного файла фронтенда; сравнение с `curl -s https://host/<файл> | sha256sum` показывает, что сервер отдаёт тот же код, что в репозитории (`index.html` — по адресу `/`). Это обнаруживает подмену задним числом, но не предотвращает её.
+`go run ./cmd/webhash` prints the SHA-256 of each embedded frontend file; comparing it with `curl -s https://host/<file> | sha256sum` shows that the server serves the same code as the repository (`index.html` is at `/`). This detects substitution after the fact but does not prevent it.
 
-## Почему не так, как у аналога
+## Why we differ from the namesake project
 
-Разбор публичного проекта с тем же названием — в [плане укрепления](superpowers/plans/2026-11-06-competitor-hardening.md). Сознательно не повторяем:
+An analysis of the public project with the same name is in the [hardening plan](superpowers/plans/2026-11-06-competitor-hardening.md). We deliberately do not repeat:
 
-- **Комната по одному паролю с общей солью.** Идентификатор комнаты, выведенный из пароля, уходит на сервер, и сервер может перебирать пароли офлайн сразу по всем комнатам. У нас 32 случайных байта во фрагменте ссылки, пароль только дополняет их.
-- **Argon2id через WebAssembly.** Требует `'wasm-unsafe-eval'` в CSP. Наш пароль защищает только вместе с секретом ссылки, поэтому PBKDF2-SHA256 (600 000 итераций) достаточно.
-- **`'unsafe-inline'` в `script-src`.** Обесценивает CSP против XSS.
-- **Комнаты на многих участников без списка присутствия.** Третий участник входит незаметно. У нас ровно двое и код сверки.
-- **Cover-трафик с открытым флагом.** Сервер отличает его от настоящих сообщений; к тому же у аналога такая команда обходила лимит частоты. Урок взят в этап F плана: бюджет на соединение для всех WS-кадров, включая битые и неизвестные, до любой работы. Сейчас лимит частоты есть только у отправки сообщений, а неизвестная команда закрывает соединение.
+- **A room from a password alone with a shared salt.** The room ID derived from the password goes to the server, and the server can brute-force passwords offline across all rooms at once. We have 32 random bytes in the link fragment; the password only adds to them.
+- **Argon2id via WebAssembly.** It requires `'wasm-unsafe-eval'` in the CSP. Our password protects only together with the link secret, so PBKDF2-SHA256 (600,000 iterations) is enough.
+- **`'unsafe-inline'` in `script-src`.** It makes the CSP worthless against XSS.
+- **Rooms for many participants without a presence list.** A third participant joins unnoticed. We have exactly two and a safety code.
+- **Cover traffic with a plaintext flag.** The server tells it apart from real messages; moreover, in the other project this command bypassed the rate limit. The lesson goes into stage F of the plan: a per-connection budget for all WS frames, including malformed and unknown ones, before any work. Today only message sending has a rate limit, and an unknown command closes the connection.

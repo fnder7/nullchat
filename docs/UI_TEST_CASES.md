@@ -1,143 +1,142 @@
 # UI test cases
 
-Постоянный набор ручных UI/E2E-проверок nullchat. Он проверяет пользовательский
-контракт всего приложения, включая наблюдаемое через интерфейс поведение
-PostgreSQL, HTTP API и WebSocket.
+The standing set of manual UI/E2E checks for nullchat. It verifies the user-facing
+contract of the whole application, including the behavior of PostgreSQL, the HTTP
+API and WebSocket as observed through the interface.
 
-## Правила прогона
+## Run rules
 
-- После каждого изменения выполнять P0 smoke (`UI-01`—`UI-09`).
-- После изменений в затронутой области дополнительно выполнять связанные P1-кейсы.
-- Перед релизом выполнять полный P0 и P1.
-- Для двух участников использовать независимые browser contexts, чтобы не делить
+- After every change, run the P0 smoke (`UI-01`–`UI-09`).
+- After changes in an affected area, also run the related P1 cases.
+- Before a release, run the full P0 and P1.
+- For the two participants, use independent browser contexts so they do not share
   `sessionStorage`.
-- Результат каждого кейса фиксировать как `PASS`, `FAIL` или `BLOCKED`. Для
-  `FAIL` указывать фактический результат и шаг воспроизведения, для `BLOCKED` —
-  отсутствующую зависимость.
-- Во время прогона проверять видимый результат, консоль браузера и неожиданные
-  HTTP/WebSocket-ошибки.
+- Record each case's result as `PASS`, `FAIL` or `BLOCKED`. For `FAIL`, give the
+  actual result and the reproduction step; for `BLOCKED`, the missing dependency.
+- During the run, check the visible result, the browser console and any unexpected
+  HTTP/WebSocket errors.
 
-## P0 — smoke после каждого изменения
+## P0 — smoke after every change
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| UI-01 | Открыть главную страницу. | Страница и статические ресурсы загружены, верстка не сломана, ошибок в консоли нет. |
-| UI-02 | Создать комнату с названием и TTL. | Открывается чат; видны название, таймер, создатель и успешный статус подключения. |
-| UI-03 | Скопировать приглашение, открыть его в независимом browser context и войти. | Второй пользователь входит в ту же комнату; у обоих отображаются два участника. |
-| UI-04 | Отправить по сообщению от каждого участника. | Оба сообщения появляются у обоих участников в одинаковом порядке, без дубликатов. |
-| UI-05 | Обновить обе вкладки. | Сессии, участники и подтвержденная история восстанавливаются. |
-| UI-06 | Временно разорвать WebSocket-соединение и восстановить его. | UI показывает переподключение, блокирует отправку во время разрыва и восстанавливает историю после подключения. |
-| UI-07 | Перезапустить backend, не перезапуская PostgreSQL, до окончания TTL. | Обе вкладки переподключаются; комната, сессии, участники и подтвержденные сообщения сохраняются. |
-| UI-08 | Завершить чат одним из участников. | Оба участника видят завершение; отправка и повторный вход невозможны; видимая история очищена. |
-| UI-09 | Проверить консоль и сетевые запросы за весь сценарий. | Нет необработанных JS-ошибок и неожиданных HTTP/WebSocket-ошибок. |
+| UI-01 | Open the home page. | The page and static assets load, the layout is not broken, no console errors. |
+| UI-02 | Create a room with a title and TTL. | The chat opens; the title, timer, creator and a successful connection status are visible. |
+| UI-03 | Copy the invite, open it in an independent browser context and join. | The second user joins the same room; both see two participants. |
+| UI-04 | Send one message from each participant. | Both messages appear for both participants in the same order, without duplicates. |
+| UI-05 | Reload both tabs. | Sessions, participants and confirmed history are restored. |
+| UI-06 | Temporarily break the WebSocket connection and restore it. | The UI shows reconnection, blocks sending during the outage and restores history after reconnecting. |
+| UI-07 | Restart the backend without restarting PostgreSQL, before the TTL ends. | Both tabs reconnect; the room, sessions, participants and confirmed messages are preserved. |
+| UI-08 | End the chat from one of the participants. | Both participants see the end; sending and rejoining are impossible; the visible history is cleared. |
+| UI-09 | Check the console and network requests over the whole scenario. | No unhandled JS errors and no unexpected HTTP/WebSocket errors. |
 
-## P1 — основная регрессия
+## P1 — main regression
 
-### Создание комнаты
+### Room creation
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| ROOM-01 | Создать комнату без названия. | Используется корректное название по умолчанию. |
-| ROOM-02 | Создать комнату с названием длиной 60 символов. | Название принимается, сохраняется и полностью доступно в интерфейсе. |
-| ROOM-03 | Последовательно проверить все доступные значения TTL. | Для каждого значения создается комната с соответствующим временем жизни. |
-| ROOM-04 | Инициировать сетевой повтор одного запроса создания. | Не создаются две комнаты; повтор возвращает исходную комнату и сессию. |
-| ROOM-05 | Попытаться создать комнату при недоступной БД. | Показана понятная временная ошибка; UI не переходит в поврежденное состояние. |
+| ROOM-01 | Create a room without a title. | A correct default title is used. |
+| ROOM-02 | Create a room with a 60-character title. | The title is accepted, saved and fully available in the interface. |
+| ROOM-03 | Check every available TTL value in turn. | For each value, a room is created with the matching lifetime. |
+| ROOM-04 | Trigger a network retry of a single create request. | Two rooms are not created; the retry returns the original room and session. |
+| ROOM-05 | Try to create a room while the DB is unavailable. | A clear temporary error is shown; the UI does not enter a broken state. |
 
-### Приглашение и участники
+### Invite and participants
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| JOIN-01 | Открыть действующую ссылку и войти. | Гость добавлен; счетчик у обоих равен `2 / 2`. |
-| JOIN-02 | После успешного входа гостя открыть то же приглашение в третьем context. | Вход запрещен; показана контролируемая ошибка без раскрытия данных комнаты. |
-| JOIN-03 | Инициировать сетевой повтор одного запроса входа. | Возвращается исходная сессия; лишний участник не создается. |
-| JOIN-04 | Открыть поврежденную или неизвестную ссылку-приглашение. | Показана контролируемая ошибка; приложение остается работоспособным. |
-| JOIN-05 | Скопировать URL вида `#room=...` в новый независимый context. | Без сохраненной сессии доступ к комнате и истории не предоставляется. |
-| JOIN-06 | Обновить вкладку участника. | Его сессия, имя и отметка «это ты» сохраняются. |
+| JOIN-01 | Open a valid link and join. | The guest is added; the counter shows `2 / 2` for both. |
+| JOIN-02 | After the guest has joined, open the same invite in a third context. | Joining is refused; a controlled error is shown without revealing room data. |
+| JOIN-03 | Trigger a network retry of a single join request. | The original session is returned; no extra participant is created. |
+| JOIN-04 | Open a damaged or unknown invite link. | A controlled error is shown; the application keeps working. |
+| JOIN-05 | Copy a `#room=...` URL into a new independent context. | Without a saved session, no access to the room or its history is granted. |
+| JOIN-06 | Reload a participant's tab. | Their session, name and the "you" marker are preserved. |
 
-### Сообщения
+### Messages
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| MSG-01 | Отправить обычный текст. | Сообщение проходит состояния отправки и подтверждения. |
-| MSG-02 | Ввести текст и нажать Enter. | Сообщение отправляется. |
-| MSG-03 | Ввести две строки через Shift+Enter. | Добавляется новая строка; преждевременной отправки нет. |
-| MSG-04 | Попытаться отправить пустой или состоящий из пробелов текст. | Сообщение не появляется в истории. |
-| MSG-05 | Отправить сообщение на допустимой границе размера. | Сообщение успешно подтверждается и отображается у обоих. |
-| MSG-06 | Попытаться превысить допустимый размер. | Ввод ограничен или сервер возвращает понятную ошибку; UI стабилен. |
-| MSG-07 | Отправить HTML и строку `<script>alert(1)</script>`. | Строка отображается как текст; код не исполняется и DOM не инъецируется. |
-| MSG-08 | Повторить не подтвержденное сообщение после сетевой ошибки. | Сообщение сохраняется и отображается не более одного раза. |
-| MSG-09 | Обновить страницу после подтверждения сообщения. | Сообщение восстанавливается из постоянного хранилища. |
-| MSG-10 | Быстро отправить несколько сообщений от обоих участников. | Порядок сообщений одинаковый у обоих клиентов. |
-| MSG-11 | Достигнуть лимита сообщений комнаты. | Появляется состояние `message_limit`; ранее подтвержденная история остается доступна. |
+| MSG-01 | Send plain text. | The message goes through the sending and confirmed states. |
+| MSG-02 | Type text and press Enter. | The message is sent. |
+| MSG-03 | Type two lines using Shift+Enter. | A new line is added; nothing is sent prematurely. |
+| MSG-04 | Try to send empty or whitespace-only text. | The message does not appear in the history. |
+| MSG-05 | Send a message at the allowed size limit. | The message is confirmed and shown to both. |
+| MSG-06 | Try to exceed the allowed size. | Input is limited or the server returns a clear error; the UI stays stable. |
+| MSG-07 | Send HTML and the string `<script>alert(1)</script>`. | The string is shown as text; the code does not run and the DOM is not injected. |
+| MSG-08 | Retry an unconfirmed message after a network error. | The message is saved and shown at most once. |
+| MSG-09 | Reload the page after a message is confirmed. | The message is restored from persistent storage. |
+| MSG-10 | Quickly send several messages from both participants. | Message order is the same on both clients. |
+| MSG-11 | Reach the room's message limit. | The `message_limit` state appears; previously confirmed history stays available. |
 
-### Соединение, БД и восстановление
+### Connection, DB and recovery
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| NET-01 | Перевести браузер в Offline при открытом чате. | Показан разрыв соединения; отправка заблокирована. |
-| NET-02 | Вернуть сеть. | Происходит автоматическое переподключение и загрузка актуальной истории. |
-| NET-03 | Не восстанавливать сеть до исчерпания автоматических попыток. | Появляется понятное состояние ошибки и кнопка ручного повтора. |
-| NET-04 | Вернуть сеть и нажать кнопку ручного повтора. | Подключение восстанавливается; чат снова доступен. |
-| NET-05 | Отправить сообщение непосредственно перед разрывом. | После reconnect подтвержденное сообщение не потеряно и не продублировано. |
-| NET-06 | Перезапустить backend, сохранив БД и ее volume. | Действующие сессии и подтвержденная история восстанавливаются. |
-| NET-07 | Временно остановить PostgreSQL. | UI сообщает о временной недоступности и не изображает успешную отправку. |
-| NET-08 | Вернуть PostgreSQL до окончания TTL. | Клиенты снова подключаются; подтвержденные данные комнаты сохранены. |
+| NET-01 | Switch the browser to Offline with the chat open. | A connection loss is shown; sending is blocked. |
+| NET-02 | Restore the network. | Automatic reconnection happens and the current history loads. |
+| NET-03 | Do not restore the network until the automatic attempts run out. | A clear error state and a manual retry button appear. |
+| NET-04 | Restore the network and press the manual retry button. | The connection is restored; the chat is available again. |
+| NET-05 | Send a message right before the outage. | After reconnect, the confirmed message is neither lost nor duplicated. |
+| NET-06 | Restart the backend, keeping the DB and its volume. | Active sessions and confirmed history are restored. |
+| NET-07 | Temporarily stop PostgreSQL. | The UI reports temporary unavailability and does not pretend a send succeeded. |
+| NET-08 | Bring PostgreSQL back before the TTL ends. | Clients reconnect; the room's confirmed data is preserved. |
 
-### Завершение и TTL
+### Ending and TTL
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| END-01 | Завершить чат создателем. | Комната закрывается у обоих участников. |
-| END-02 | Завершить чат гостем. | Комната закрывается у обоих участников. |
-| END-03 | Обновить страницу после завершения. | Доступ и история не восстанавливаются. |
-| END-04 | Повторно открыть приглашение завершенной комнаты. | Вход запрещен. |
-| END-05 | Создать комнату на одну минуту и дождаться TTL. | Оба участника видят состояние «Время разговора истекло». |
-| END-06 | Попытаться отправить сообщение после TTL. | Отправка невозможна. |
-| END-07 | Перезапустить backend до окончания TTL. | Комната остается активной только до исходного `expires_at`; TTL не начинается заново. |
+| END-01 | End the chat as the creator. | The room closes for both participants. |
+| END-02 | End the chat as the guest. | The room closes for both participants. |
+| END-03 | Reload the page after ending. | Access and history are not restored. |
+| END-04 | Reopen the invite of an ended room. | Joining is refused. |
+| END-05 | Create a one-minute room and wait for the TTL. | Both participants see the "The conversation time is over" state. |
+| END-06 | Try to send a message after the TTL. | Sending is impossible. |
+| END-07 | Restart the backend before the TTL ends. | The room stays active only until the original `expires_at`; the TTL does not restart. |
 
-### Хранение и безопасность
+### Storage and security
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| SEC-01 | Проверить `sessionStorage` во время активного чата. | Сохранены данные текущей сессии, но отсутствуют тексты истории сообщений. |
-| SEC-02 | Завершить комнату и проверить `sessionStorage`. | Запись сессии этой комнаты удалена. |
-| SEC-03 | Запросить комнату без session token. | Доступ к комнате и истории отсутствует. |
-| SEC-04 | Спровоцировать API-ошибку и проверить UI/ответ. | Не раскрываются SQL, DSN, credentials, stack trace и внутренние детали. |
-| SEC-05 | Использовать HTML/JS в названии и сообщениях. | Пользовательский контент экранирован; XSS отсутствует. |
+| SEC-01 | Inspect `sessionStorage` during an active chat. | Current session data is stored, but no message history text. |
+| SEC-02 | End the room and inspect `sessionStorage`. | This room's session entry is removed. |
+| SEC-03 | Request a room without a session token. | There is no access to the room or its history. |
+| SEC-04 | Provoke an API error and check the UI/response. | No SQL, DSN, credentials, stack trace or internal details are revealed. |
+| SEC-05 | Use HTML/JS in the title and messages. | User content is escaped; there is no XSS. |
 
-### Приватность и защита от enumeration
+### Privacy and enumeration protection
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| PRIV-01 | В двух чистых browser contexts открыть URL с существующим и случайным `#room=<64 hex>` без сохраненной сессии. | Текст, видимое состояние и переход на главную одинаковы; существование комнаты не подтверждается. |
-| PRIV-02 | Сравнить вход по использованному, закрытому и случайному корректно сформированному invite token. | Все варианты возвращают одно публичное состояние `room_unavailable` без деталей комнаты. |
-| PRIV-03 | Открыть malformed invite token и попытаться войти. | Показано нейтральное сообщение о недействительном приглашении без сведений о комнате и без нерелевантного текста про сообщения. |
-| PRIV-04 | Проверить Network при открытии `#room` без локальной сессии. | Frontend не запрашивает комнату по `room_id`; нет HTTP/WebSocket-запроса, позволяющего проверить ее существование. |
+| PRIV-01 | In two clean browser contexts, open a URL with an existing and a random `#room=<64 hex>` without a saved session. | The text, visible state and the return to the home page are identical; the room's existence is not confirmed. |
+| PRIV-02 | Compare joining with a used, a closed and a random well-formed invite token. | All variants return the same public `room_unavailable` state without room details. |
+| PRIV-03 | Open a malformed invite token and try to join. | A neutral invalid-invite message is shown, with no room details and no irrelevant text about messages. |
+| PRIV-04 | Check Network when opening `#room` without a local session. | The frontend does not request the room by `room_id`; there is no HTTP/WebSocket request that could confirm its existence. |
 
-### Интерфейс и доступность
+### Interface and accessibility
 
-| ID | Предусловия и шаги | Ожидаемый результат |
+| ID | Preconditions and steps | Expected result |
 |---|---|---|
-| VIEW-01 | Проверить главную и чат в desktop viewport. | Нет наложений, обрезанных обязательных элементов и горизонтального скролла. |
-| VIEW-02 | Проверить главную и чат в viewport `390x844`. | Основные действия доступны; горизонтального переполнения нет. |
-| VIEW-03 | Пройти основной сценарий клавиатурой. | Интерактивные элементы доступны без мыши, фокус видим, Enter/Shift+Enter работают по контракту. |
-| VIEW-04 | Наблюдать кнопки при запросе, отключении и завершении. | Кнопки и поля корректно блокируются и не допускают повторных конфликтующих действий. |
-| VIEW-05 | Проверить длинные допустимые названия и сообщения. | Контент переносится и не ломает layout. |
-| VIEW-06 | Наблюдать таймер до и после refresh/reconnect. | Таймер убывает и продолжает отсчет от серверного `expires_at`, не сбрасываясь. |
-| VIEW-07 | Сверить пользовательские тексты с текущим контрактом хранения. | UI не утверждает, что подтвержденная история теряется при рестарте backend, если она хранится в PostgreSQL. |
-| VIEW-08 | Выполнить Lighthouse accessibility audit главной страницы. | Нет проваленных accessibility-аудитов; интерактивные элементы имеют согласованные видимые и доступные имена. |
+| VIEW-01 | Check the home page and chat in a desktop viewport. | No overlaps, no clipped required elements, no horizontal scroll. |
+| VIEW-02 | Check the home page and chat in a `390x844` viewport. | The main actions are available; no horizontal overflow. |
+| VIEW-03 | Go through the main scenario with the keyboard. | Interactive elements are reachable without a mouse, focus is visible, Enter/Shift+Enter work per the contract. |
+| VIEW-04 | Watch the buttons during a request, a disconnect and an end. | Buttons and fields are correctly disabled and do not allow repeated conflicting actions. |
+| VIEW-05 | Check long allowed titles and messages. | Content wraps and does not break the layout. |
+| VIEW-06 | Watch the timer before and after refresh/reconnect. | The timer counts down and continues from the server's `expires_at` without resetting. |
+| VIEW-07 | Compare user-facing texts with the current storage contract. | The UI does not claim that confirmed history is lost on a backend restart if it is stored in PostgreSQL. |
+| VIEW-08 | Run a Lighthouse accessibility audit of the home page. | No failed accessibility audits; interactive elements have consistent visible and accessible names. |
 
-## Шаблон отчета
+## Report template
 
 ```text
-Дата и commit:
-Окружение и браузер:
+Date and commit:
+Environment and browser:
 
-| ID | Результат | Комментарий / дефект |
+| ID | Result | Comment / defect |
 |---|---|---|
 | UI-01 | PASS | |
 
-Итог:
-Блокирующие дефекты:
-Ограничения прогона:
+Summary:
+Blocking defects:
+Run limitations:
 ```

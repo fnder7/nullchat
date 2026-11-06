@@ -10,6 +10,8 @@
 
 **Spec:** `docs/UI_TEST_FINDINGS.md`
 
+> **Historical note:** when this plan was written the UI was in Russian. Quoted UI strings below are English translations of the Russian originals; the UI has since been translated to English and its current strings differ in places.
+
 ## Global Constraints
 
 - Preserve the stable backend error codes and API shapes documented in `SPEC.md`; this remediation changes presentation, not the wire protocol.
@@ -40,25 +42,25 @@
 
 **Interfaces:**
 - Consumes: `chat.NormalizeTitle(title string) (string, error)` and the embedded `web` assets.
-- Produces: `NormalizeTitle("  ") == "Тихий разговор"` and footer copy consistent with PostgreSQL persistence.
+- Produces: `NormalizeTitle("  ")` returning the Russian default title (meaning "Quiet conversation") and footer copy consistent with PostgreSQL persistence.
 
 - [ ] **Step 1: Write failing tests for the localized default and persistence copy**
 
-Change the empty-title assertion in `TestNormalizeTitleAndMessage` to require `"Тихий разговор"`. Add `TestFrontendCopyMatchesPersistenceContract` in `web/app_test.go`; read `index.html`, require the exact sentence `История доступна участникам до закрытия комнаты. Без E2EE.`, and reject the old phrase `история хранится в памяти`.
+Change the empty-title assertion in `TestNormalizeTitleAndMessage` to require the Russian default title (meaning "Quiet conversation"). Add `TestFrontendCopyMatchesPersistenceContract` in `web/app_test.go`; read `index.html`, require the exact sentence "History is available to participants until the room closes. No E2EE.", and reject the old phrase "history is kept in memory".
 
 - [ ] **Step 2: Run the focused tests and verify both failures**
 
 Run: `go test ./internal/chat ./web`
 
-Expected: FAIL because `NormalizeTitle` returns `Quiet conversation` and the embedded footer still describes in-memory history.
+Expected: FAIL because `NormalizeTitle` returns the English `Quiet conversation` and the embedded footer still describes in-memory history.
 
 - [ ] **Step 3: Implement the localized default title**
 
-In `NormalizeTitle(title string) (string, error)`, preserve trimming and validation but return `"Тихий разговор"` for the empty normalized title. Do not move the fallback into JavaScript: both storage implementations must persist the same server-authoritative title.
+In `NormalizeTitle(title string) (string, error)`, preserve trimming and validation but return the Russian default title (meaning "Quiet conversation") for the empty normalized title. Do not move the fallback into JavaScript: both storage implementations must persist the same server-authoritative title.
 
 - [ ] **Step 4: Replace the stale footer statement**
 
-In `web/index.html`, replace only the storage sentence with `История доступна участникам до закрытия комнаты. Без E2EE.` Keep the copyright and health link unchanged.
+In `web/index.html`, replace only the storage sentence with "History is available to participants until the room closes. No E2EE." Keep the copyright and health link unchanged.
 
 - [ ] **Step 5: Run the focused tests**
 
@@ -88,11 +90,11 @@ git commit -m "fix: align room defaults with persisted UI"
 Add `TestFrontendUsesOperationSpecificErrors` to assert that `app.js` contains the five-argument `api` signature, resolves failures in the order `errorOverrides[result.error] || errors[result.error] || fallback`, and supplies these exact call-site overrides:
 
 ```text
-create database_unavailable -> Сервер временно недоступен. Комната не создана — попробуй ещё раз.
-join invalid_input -> Приглашение недействительно. Проверь ссылку или попроси новую.
+create database_unavailable -> The server is temporarily unavailable. The room was not created, please try again.
+join invalid_input -> This invite is not valid. Check the link or ask for a new one.
 ```
 
-Add `TestFrontendRoomURLWithoutSessionUsesNeutralCopy` to require `Не удалось открыть комнату. Используй действующее приглашение или создай новую.` and reject `В этой вкладке нет сессии комнаты`.
+Add `TestFrontendRoomURLWithoutSessionUsesNeutralCopy` to require "The room could not be opened. Use a valid invite or create a new room." and reject "This tab has no session for the room".
 
 - [ ] **Step 2: Run the web tests and verify failure**
 
@@ -106,7 +108,7 @@ Change the function signature to `async function api(path, data, token, key = ''
 
 - [ ] **Step 4: Make missing local room credentials neutral**
 
-In the `params.has('room')` branch, keep the redirect to `/` and the no-network behavior, but replace the error with `Не удалось открыть комнату. Используй действующее приглашение или создай новую.`
+In the `params.has('room')` branch, keep the redirect to `/` and the no-network behavior, but replace the error with "The room could not be opened. Use a valid invite or create a new room."
 
 - [ ] **Step 5: Run syntax and focused tests**
 
@@ -167,11 +169,11 @@ git commit -m "fix: clear stale error after message retry"
 
 **Interfaces:**
 - Consumes: the visible brand text `n_nullchat.` and existing dark backgrounds `--bg`, `--panel`, and input background `#141915`.
-- Produces: accessible brand name `n_nullchat. — на главную` and `--muted-subtle: #84907f`, whose contrast is at least 5.05:1 on the darkest affected panel backgrounds.
+- Produces: accessible brand name `n_nullchat. — home` (Russian original: "to the home page") and `--muted-subtle: #84907f`, whose contrast is at least 5.05:1 on the darkest affected panel backgrounds.
 
 - [ ] **Step 1: Write failing static accessibility tests**
 
-Add `TestFrontendStaticAccessibilityContract` to read `index.html` and `style.css`, require `aria-label="n_nullchat. — на главную"`, require `--muted-subtle:#84907f`, and require `var(--muted-subtle)` on `.flow .flow-arrow`, `label span`, `input::placeholder,textarea::placeholder`, `.card-footnote`, and `.principle-num`.
+Add `TestFrontendStaticAccessibilityContract` to read `index.html` and `style.css`, require `aria-label="n_nullchat. — home"` (in its Russian form at the time), require `--muted-subtle:#84907f`, and require `var(--muted-subtle)` on `.flow .flow-arrow`, `label span`, `input::placeholder,textarea::placeholder`, `.card-footnote`, and `.principle-num`.
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
@@ -181,7 +183,7 @@ Expected: FAIL because the logo label omits visible label content and the subtle
 
 - [ ] **Step 3: Align the logo's accessible and visible names**
 
-Change only the brand link label to `aria-label="n_nullchat. — на главную"`, retaining the visible markup and link destination.
+Change only the brand link label to `aria-label="n_nullchat. — home"` (in its Russian form at the time), retaining the visible markup and link destination.
 
 - [ ] **Step 4: Consolidate low-contrast small text**
 

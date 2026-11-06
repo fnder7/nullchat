@@ -1,147 +1,147 @@
-# План модернизации по решениям конкурента (chrmontessori/nullchat)
+# Modernization plan based on the competitor's decisions (chrmontessori/nullchat)
 
-> **Для исполнителя:** это план этапов, а не пошаговый TDD-план. Перед реализацией каждого этапа пишется отдельный подробный план по образцу [`2026-11-06-e2ee.md`](2026-11-06-e2ee.md): падающий тест → реализация → зелёный тест → коммит. Пункты, помеченные **Решение**, требуют выбора владельца проекта до начала работы.
+> **For the implementer:** this is a plan of stages, not a step-by-step TDD plan. Before implementing each stage, a separate detailed plan is written following [`2026-11-06-e2ee.md`](2026-11-06-e2ee.md): failing test → implementation → green test → commit. Items marked **Decision** require the project owner's choice before work starts.
 
-**Источник.** Публичный репозиторий [chrmontessori/nullchat](https://github.com/chrmontessori/nullchat) (Next.js + Node `ws`, NaCl secretbox, Argon2id), прочитан 06.11.2026 без запуска кода. Ссылки вида `server/room.ts:30` — на файлы этого репозитория. Код не копируется: файла LICENSE у конкурента нет (README говорит MIT, `package.json` — ISC), берутся только идеи.
+**Source.** The public repository [chrmontessori/nullchat](https://github.com/chrmontessori/nullchat) (Next.js + Node `ws`, NaCl secretbox, Argon2id), read on 2026-11-06 without running the code. References like `server/room.ts:30` point to files of that repository. No code is copied: the competitor has no LICENSE file (the README says MIT, `package.json` says ISC), so only ideas are taken.
 
-**Отправная точка nullchat (`dev`, 3d3dd4d).** E2EE в браузере (ECDH P-256 + секрет ссылки + необязательный пароль, AES-256-GCM, блоки по 256 байт, счётчики, код сверки), неизвлекаемые ключи в IndexedDB, CSP с Trusted Types, COOP/CORP, манифест хешей фронтенда, PostgreSQL, деплой на Render Free.
+**nullchat's starting point (`dev`, 3d3dd4d).** E2EE in the browser (ECDH P-256 + link secret + optional password, AES-256-GCM, 256-byte blocks, counters, safety code), non-extractable keys in IndexedDB, CSP with Trusted Types, COOP/CORP, a frontend hash manifest, PostgreSQL, deploy on Render Free.
 
-## 1. Сводка: что берём, что адаптируем, что отклоняем
+## 1. Summary: what we take, adapt and reject
 
-| Решение конкурента | Где у них | У нас сейчас | Вердикт |
+| Competitor's decision | Where they have it | What we have now | Verdict |
 |---|---|---|---|
-| Фиксированный размер шифротекста (16 KiB, шум, префикс длины) | `lib/crypto.ts:45,143-159` | Блоки по 256 байт: длина видна с точностью до блока | **Берём**, этап B |
-| Обнуление сырого ключевого материала (`fill(0)`) | `lib/crypto.ts:86,111-119` | Байты секрета, пароля, HKDF и ECDH остаются в памяти до GC | **Берём**, этап A |
-| Отключённое сжатие WS (`perMessageDeflate:false`) против CRIME/BREACH | `server/index.ts:180` | Выключено только по умолчанию в `coder/websocket`, не закреплено | **Закрепляем**, этап A |
-| Не передавать IP в приложение (`X-Forwarded-For ""`), логи в `/dev/null` | `deploy/nginx/nullchat-ws.conf:24`, `deploy/nullchat.service:71` | Прикладные логи без IP, но стандартный `http.Server` пишет `panic serving <IP:port>` | **Адаптируем**, этап A |
-| Удаление сообщений: через 24 ч хранения и через 5 мин после прочтения | `server/room.ts:24-26,156-174` | Физической очистки нет, строки закрытых комнат живут бессрочно | **Берём очистку**, этап C. Сжигание после прочтения — **Решение**, этап C2 |
-| Кнопка паники (Esc×3: стереть DOM, хранилище, буфер, уйти со страницы) | `components/ChatRoom.tsx:332-374` | Нет | **Адаптируем**, этап D |
-| Автоочистка буфера обмена через 15 с после копирования | `components/ChatRoom.tsx:311-321` | Нет | **Адаптируем** (**Решение** о поведении), этап D |
-| Блокировка по неактивности | `components/ChatRoom.tsx:272-309` | Нет | **Решение**, этап D3 |
-| Воспроизводимая сборка (фиксированный buildId) и SRI в Tor-сборке | `scripts/add-sri.js` | Есть манифест `cmd/webhash`, сборка не воспроизводимая | **Берём воспроизводимость**, этап E. SRI — по желанию |
-| Лимиты: 5 соединений и 10 запросов в минуту на IP (nginx), 1 сообщение/с, флуд-лимит комнаты | `deploy/nginx/nullchat-ws.conf:7-15` | Один общий бюджет 120/мин на процесс, 200 мс на сессию | **Адаптируем** без хранения IP, этап F |
-| Cover-трафик и padding-кадры сервера | `server/room.ts:295-301`, флаг `c:1` открытым текстом | Нет | **Отклоняем**: серверу флаг виден, а неотличимый cover съедает лимит 500 сообщений. Пересмотреть после этапа B |
-| Пароль → `roomId` через Argon2id с глобальной солью; `roomId` в URL WebSocket | `lib/room.ts:12`, `ChatRoom.tsx:40` | 32 случайных байта во фрагменте, пароль только дополняет | **Отклоняем**: позволяет серверу перебирать пароли офлайн по всем комнатам сразу |
-| Argon2id (hash-wasm) | `lib/crypto.ts:9` | PBKDF2-SHA256 600 000 итераций (WebCrypto) | **Отклоняем**: нужен wasm и `'wasm-unsafe-eval'` в CSP; пароль у нас защищает только вместе с секретом ссылки |
-| `'unsafe-inline'` в `script-src` | `server/index.ts:41-74` | `script-src 'self'` + Trusted Types | **Отклоняем**, уже лучше |
-| До 50 участников, присутствие без списка | `server/room.ts` | Ровно двое, код сверки | **Отклоняем**: третий участник входит незаметно |
-| TOFU-verifier без счётчика неудач | `server/room.ts:233-247` | Verifier задаёт создатель, 5 неудач сжигают приглашение | **Отклоняем**, уже лучше |
-| Tor onion, systemd-песочница, отключённый swap, tmpfs-хранилище | `tor/torrc`, `deploy/harden.sh` | Render Free: не управляем хостом | **Отклоняем для Render**. Для самостоятельного хостинга — в документации этапа E |
+| Fixed ciphertext size (16 KiB, noise, length prefix) | `lib/crypto.ts:45,143-159` | 256-byte blocks: length is visible to within a block | **Take**, stage B |
+| Zeroing raw key material (`fill(0)`) | `lib/crypto.ts:86,111-119` | Bytes of the secret, password, HKDF and ECDH stay in memory until GC | **Take**, stage A |
+| Disabled WS compression (`perMessageDeflate:false`) against CRIME/BREACH | `server/index.ts:180` | Disabled only by default in `coder/websocket`, not pinned | **Pin it**, stage A |
+| Not passing the IP to the application (`X-Forwarded-For ""`), logs to `/dev/null` | `deploy/nginx/nullchat-ws.conf:24`, `deploy/nullchat.service:71` | Application logs without IPs, but the standard `http.Server` writes `panic serving <IP:port>` | **Adapt**, stage A |
+| Deleting messages: after 24 h of storage and 5 min after being read | `server/room.ts:24-26,156-174` | No physical cleanup, rows of closed rooms live forever | **Take the cleanup**, stage C. Burn-after-reading is a **Decision**, stage C2 |
+| Panic button (Esc×3: wipe the DOM, storage, clipboard, leave the page) | `components/ChatRoom.tsx:332-374` | None | **Adapt**, stage D |
+| Auto-clearing the clipboard 15 s after copying | `components/ChatRoom.tsx:311-321` | None | **Adapt** (**Decision** on behavior), stage D |
+| Inactivity lock | `components/ChatRoom.tsx:272-309` | None | **Decision**, stage D3 |
+| Reproducible build (fixed buildId) and SRI in the Tor build | `scripts/add-sri.js` | The `cmd/webhash` manifest exists, the build is not reproducible | **Take reproducibility**, stage E. SRI is optional |
+| Limits: 5 connections and 10 requests per minute per IP (nginx), 1 message/s, room flood limit | `deploy/nginx/nullchat-ws.conf:7-15` | One shared budget of 120/min per process, 200 ms per session | **Adapt** without storing IPs, stage F |
+| Cover traffic and server padding frames | `server/room.ts:295-301`, flag `c:1` in plaintext | None | **Reject**: the server sees the flag, and indistinguishable cover eats the 500-message limit. Revisit after stage B |
+| Password → `roomId` via Argon2id with a global salt; `roomId` in the WebSocket URL | `lib/room.ts:12`, `ChatRoom.tsx:40` | 32 random bytes in the fragment, the password only adds to them | **Reject**: lets the server brute-force passwords offline across all rooms at once |
+| Argon2id (hash-wasm) | `lib/crypto.ts:9` | PBKDF2-SHA256 600,000 iterations (WebCrypto) | **Reject**: needs wasm and `'wasm-unsafe-eval'` in the CSP; our password protects only together with the link secret |
+| `'unsafe-inline'` in `script-src` | `server/index.ts:41-74` | `script-src 'self'` + Trusted Types | **Reject**, ours is already better |
+| Up to 50 participants, presence without a list | `server/room.ts` | Exactly two, a safety code | **Reject**: a third participant joins unnoticed |
+| TOFU verifier without a failure counter | `server/room.ts:233-247` | The creator sets the verifier, 5 failures burn the invite | **Reject**, ours is already better |
+| Tor onion, systemd sandbox, disabled swap, tmpfs storage | `tor/torrc`, `deploy/harden.sh` | Render Free: we do not control the host | **Reject for Render**. For self-hosting, in the stage E documentation |
 
-Уроки ошибок конкурента идут в тесты как регрессии: команда, обходящая лимит (cover-кадр уходит в `relayCover` и рассылается всем до проверки частоты: `server/room.ts:371-374` против лимита в `server/room.ts:380-385`), секреты в URL, `Math.random` для чего-то, связанного с безопасностью.
+Lessons from the competitor's bugs become regression tests: a command bypassing the limit (a cover frame goes to `relayCover` and is broadcast to everyone before the rate check: `server/room.ts:371-374` versus the limit in `server/room.ts:380-385`), secrets in URLs, `Math.random` for anything security-related.
 
-## 2. Этапы по порядку
+## 2. Stages in order
 
-Порядок: сначала дешёвое и безопасное (A), затем то, что меняет протокол и хранение (B, C), затем UX-функции, которые нужно согласовать (D), и инфраструктура (E, F). Оценка трудоёмкости: S — до полудня, M — день-два, L — больше.
+Order: first the cheap and safe (A), then what changes the protocol and storage (B, C), then UX features that need agreement (D), and infrastructure (E, F). Effort estimate: S is up to half a day, M is a day or two, L is more.
 
-### Этап A. Быстрое укрепление без изменения протокола (S)
+### Stage A. Quick hardening without protocol changes (S)
 
-**Статус:** выполнен 07.11.2026 в ветке `feature/hardening-a` (A1–A4).
+**Status:** done on 2026-11-07 in the `feature/hardening-a` branch (A1–A4).
 
-**A1. Логи без IP-адресов.**
-- `cmd/server/main.go`: задать `http.Server.ErrorLog` — `log.Logger` поверх writer, который заменяет `IPv4:port`, `[IPv6]:port` на `<addr>` и отправляет строку в `slog` уровня WARN.
-- Тест: обработчик, вызывающий `panic`, плюс запрос через `httptest`. Строка в логе есть, адреса клиента в ней нет.
-- Связь: закрывает пункт шага 9 `PLAN.md` «отсутствие токенов… и персональных данных в прикладных логах».
+**A1. Logs without IP addresses.**
+- `cmd/server/main.go`: set `http.Server.ErrorLog` to a `log.Logger` over a writer that replaces `IPv4:port`, `[IPv6]:port` with `<addr>` and sends the line to `slog` at WARN level.
+- Test: a handler that calls `panic`, plus a request through `httptest`. The line is in the log, the client address is not in it.
+- Link: closes the `PLAN.md` step 9 item "no tokens… or personal data in application logs".
 
-**A2. Закрепить отсутствие сжатия.**
-- `internal/httpapi/server.go`: явно `websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled}`. Не добавлять gzip-middleware для HTTP.
-- Тест: WS-рукопожатие с `Sec-WebSocket-Extensions: permessage-deflate` в ответе не содержит этого расширения. HTTP-ответы без `Content-Encoding`.
+**A2. Pin the absence of compression.**
+- `internal/httpapi/server.go`: explicit `websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled}`. Do not add gzip middleware for HTTP.
+- Test: a WS handshake with `Sec-WebSocket-Extensions: permessage-deflate` does not get this extension in the response. HTTP responses have no `Content-Encoding`.
 
-**A3. Обнуление ключевого материала в `web/crypto.js`.**
-- После `importKey` и `deriveBits` вызывать `.fill(0)` у принадлежащих модулю буферов: байтов секрета, `pw`, `IKM`, выходов HKDF, общего секрета ECDH, открытого текста после `encrypt`.
-- В `app.js` при `finish()` обнулять доступные `Uint8Array` и отпускать ссылки (это уже делается для `CryptoKey`).
-- Честно в документации: JS-строки и копии внутри движка не стираются, это best effort.
-- Тест (node): обёртка `withWiped(bytes, fn)` после вызова оставляет буфер нулевым, в том числе если `fn` бросает исключение.
+**A3. Zeroing key material in `web/crypto.js`.**
+- After `importKey` and `deriveBits`, call `.fill(0)` on the buffers the module owns: the secret bytes, `pw`, `IKM`, HKDF outputs, the ECDH shared secret, the plaintext after `encrypt`.
+- In `app.js`, on `finish()`, zero the reachable `Uint8Array`s and drop the references (this is already done for `CryptoKey`).
+- Be honest in the documentation: JS strings and copies inside the engine are not wiped, this is best effort.
+- Test (node): a `withWiped(bytes, fn)` wrapper leaves the buffer zeroed after the call, including when `fn` throws.
 
-**A4. Документ «Что видит сервер».**
-- `docs/SECURITY.md`: таблица наблюдателей (сервер приложения, БД, логи Render и прокси, сетевой наблюдатель за TLS, держатель ссылки, держатель ссылки и пароля, скомпрометированный JS) и что каждый из них видит или может сделать.
-- Сюда же ссылки на модель угроз из дизайна E2EE и раздел «Почему не как у конкурента» со строками «Отклоняем» из таблицы выше.
+**A4. "What the server sees" document.**
+- `docs/SECURITY.md`: a table of observers (the application server, the database, Render and proxy logs, a network observer behind TLS, a link holder, a holder of the link and the password, compromised JS) and what each of them sees or can do.
+- Also links to the threat model in the E2EE design and a "Why we differ from the namesake project" section with the "Reject" rows from the table above.
 
-**Готово, когда** тесты A1–A3 зелёные, а README и SPEC ссылаются на `SECURITY.md`.
+**Done when** the A1–A3 tests are green and README and SPEC link to `SECURITY.md`.
 
-### Этап B. Фиксированный размер сообщения (M)
+### Stage B. Fixed message size (M)
 
-**Цель:** сервер и сетевой наблюдатель не различают короткое и длинное сообщение.
+**Goal:** the server and a network observer cannot tell a short message from a long one.
 
-- **Решение B0.** Выбрать один из вариантов:
-  1. **Один размер 4096 байт открытого текста (рекомендуется).** Каждое сообщение — 4124 байта, около 5,5 КБ в base64. Худший случай по объёму: 100 комнат × 500 сообщений ≈ 275 МБ. Это помещается в бесплатную Postgres Render (1 ГБ), но вместе с этапом C объём держится низким.
-  2. **Три класса: 256 / 1024 / 4096.** Дешевле по объёму, но остаются три различимых класса длины.
-- `web/crypto.js`: `pad()` всегда до выбранного размера. `MAX_TEXT_BYTES` не меняется.
-- `internal/chat/envelope.go`: принимать только выбранный размер (или классы). На один релиз оставить приём старых блоков по 256 для комнат, открытых во время деплоя (они живут не больше 60 минут), во втором релизе убрать.
-- Название уже фиксированного размера (284 байта), его не трогаем.
-- Тесты: node-тест размеров читает новую константу из `envelope.go`. Go-тест: сообщение «старого» размера после переходного релиза отклоняется.
-- Документация: SPEC §4–5, дизайн E2EE §5.
+- **Decision B0.** Choose one of:
+  1. **A single size of 4096 bytes of plaintext (recommended).** Every message is 4124 bytes, about 5.5 KB in base64. Worst case by volume: 100 rooms × 500 messages ≈ 275 MB. This fits in Render's free Postgres (1 GB), but together with stage C the volume stays low.
+  2. **Three classes: 256 / 1024 / 4096.** Cheaper by volume, but three distinguishable length classes remain.
+- `web/crypto.js`: `pad()` always to the chosen size. `MAX_TEXT_BYTES` does not change.
+- `internal/chat/envelope.go`: accept only the chosen size (or classes). For one release keep accepting the old 256-byte blocks for rooms opened during the deploy (they live at most 60 minutes); remove this in the second release.
+- The title is already fixed-size (284 bytes); leave it alone.
+- Tests: the node size test reads the new constant from `envelope.go`. Go test: a message of the "old" size is rejected after the transition release.
+- Documentation: SPEC §4–5, E2EE design §5.
 
-**Готово, когда** у всех шифротекстов одинаковая длина (проверка в браузере на Render: сообщения «a» и 4000 байт дают одинаковый размер `ciphertext`).
+**Done when** all ciphertexts have the same length (check in the browser on Render: the messages "a" and 4000 bytes give the same `ciphertext` size).
 
-### Этап C. Ничего не хранится дольше нужного (M)
+### Stage C. Nothing is kept longer than needed (M)
 
-**C1. Физическая очистка закрытых комнат.**
-- Новый фоновый шаг в `Expire` или отдельный тикер: удалять строки комнат в статусе `closed`/`expired`, у которых `closed_at` старше `PURGE_AFTER` (по умолчанию 10 минут, настраивается). Удаление пакетами по 100: `messages` → `sessions` → `invites` → `participants` → `idempotency_requests` → `rooms`. Блокировки — в порядке, согласованном с `closeRoomTx`.
-- Миграция `0004`: индекс по `(status, closed_at)` и, при необходимости, `ON DELETE CASCADE` вместо ручного порядка.
-- `memory`: уже освобождает данные. Убедиться, что `endRoom` не оставляет ссылок.
-- Тесты (integration): закрытая комната через `PURGE_AFTER` исчезает целиком, открытая не трогается, повтор create/join после очистки получает `room_unavailable`, а не повтор ответа. Конкурентный `End` и очистка — без взаимоблокировок.
-- Документация: SPEC §7 «Хранение» переписать с «не реализовано» на конкретный срок. Оговорить, что WAL и бэкапы Render подчиняются политике Render.
-- Связь: закрывает «физическую очистку» из статуса `PLAN.md` и цель retention «TTL + 24 часа», причём срок становится короче.
+**C1. Physical cleanup of closed rooms.**
+- A new background step in `Expire` or a separate ticker: delete rows of rooms in status `closed`/`expired` whose `closed_at` is older than `PURGE_AFTER` (10 minutes by default, configurable). Delete in batches of 100: `messages` → `sessions` → `invites` → `participants` → `idempotency_requests` → `rooms`. Locks in the order agreed with `closeRoomTx`.
+- Migration `0004`: an index on `(status, closed_at)` and, if needed, `ON DELETE CASCADE` instead of the manual order.
+- `memory`: already frees the data. Make sure `endRoom` leaves no references.
+- Tests (integration): a closed room disappears entirely after `PURGE_AFTER`, an open one is untouched, retrying create/join after cleanup gets `room_unavailable` rather than a replayed response. Concurrent `End` and cleanup without deadlocks.
+- Documentation: rewrite SPEC §7 "Storage" from "not implemented" to a concrete period. Note that Render's WAL and backups follow Render's policy.
+- Link: closes the "physical cleanup" from the `PLAN.md` status and the "TTL + 24 hours" retention target, and the period becomes shorter.
 
-**C2. Исчезающие сообщения (Решение).** Конкурент сжигает сообщение через 5 минут после прочтения, но для этого нужны отметки о прочтении, а их SPEC §1 исключает. Альтернатива без отметок о прочтении:
-- создатель выбирает «сообщения живут N минут» (выкл / 5 / 15);
-- срок шифруется в названии или передаётся открытым полем `message_ttl`;
-- сервер удаляет сообщения старше N минут тем же очистителем, клиенты убирают их из DOM по `created_at`.
+**C2. Disappearing messages (Decision).** The competitor burns a message 5 minutes after it is read, but that needs read receipts, which SPEC §1 excludes. An alternative without read receipts:
+- the creator chooses "messages live N minutes" (off / 5 / 15);
+- the period is encrypted in the title or passed as a plaintext `message_ttl` field;
+- the server deletes messages older than N minutes with the same cleaner, and clients remove them from the DOM by `created_at`.
 
-Отдельный дизайн-документ — только если владелец проекта этого хочет.
+A separate design document only if the project owner wants this.
 
-### Этап D. Следы на устройстве участника (S–M, нужны решения)
+### Stage D. Traces on the participant's device (S–M, decisions needed)
 
-**D1. Кнопка паники.**
-- Тройное нажатие Esc (в пределах 1 с) плюс заметная кнопка в боковой панели для мобильных.
-- Действие: удалить запись ключей в IndexedDB и `sessionStorage` вкладки, очистить DOM, обнулить ключи (A3), `history.replaceState` на `/`, перейти на пустую главную. Обработать возврат из bfcache (`pageshow` с `persisted`).
-- **Решение:** только локальная очистка (собеседник остаётся в комнате, как у конкурента) или локальная очистка плюс `End` для обоих.
-- Тест: контрактный тест `app_test.go` на обработчик и ручная браузерная проверка: после паники IndexedDB пуст, «назад» не показывает переписку.
+**D1. Panic button.**
+- A triple Esc press (within 1 s) plus a visible button in the sidebar for mobile.
+- Action: delete the key record in IndexedDB and the tab's `sessionStorage`, clear the DOM, zero the keys (A3), `history.replaceState` to `/`, go to an empty home page. Handle the return from bfcache (`pageshow` with `persisted`).
+- **Decision:** local cleanup only (the contact stays in the room, as with the competitor) or local cleanup plus `End` for both.
+- Test: a contract test in `app_test.go` for the handler and a manual browser check: after panic IndexedDB is empty, "back" does not show the conversation.
 
-**D2. Буфер обмена.**
-- После «Скопировать ссылку» через 60 секунд перезаписать буфер пустой строкой и показать подсказку «Ссылка удалится из буфера через 60 с». Также при панике и при `finish()`.
-- **Решение:** очищать вслепую (как конкурент: может стереть то, что пользователь скопировал позже) или только по явной кнопке «Очистить буфер».
+**D2. Clipboard.**
+- After "Copy link", overwrite the clipboard with an empty string after 60 seconds and show the hint "The link will be removed from the clipboard in 60 s". Also on panic and on `finish()`.
+- **Decision:** clear blindly (like the competitor: may erase something the user copied later) or only via an explicit "Clear clipboard" button.
 
-**D3. Блокировка по неактивности (Решение).** Ключи лежат в IndexedDB, поэтому «блокировка» без удаления ключей косметическая, а с удалением равна панике. Варианты: выключено (по умолчанию) / паника через N минут бездействия с предупреждением за 30 с.
+**D3. Inactivity lock (Decision).** The keys are in IndexedDB, so a "lock" without deleting the keys is cosmetic, and with deletion it equals panic. Options: off (default) / panic after N minutes of inactivity with a 30 s warning.
 
-### Этап E. Проверяемость развёрнутого кода (M)
+### Stage E. Verifiability of the deployed code (M)
 
-- `Dockerfile`: базовые образы закрепить по digest, `-trimpath -buildvcs=false`, `SOURCE_DATE_EPOCH` из времени коммита.
-- CI (`.gitlab-ci.yml`): задание `reproducible`: две сборки, сравнение SHA-256 бинарника. Артефакт `webhash.txt` (вывод `go run ./cmd/webhash`) у каждого тега.
-- Релиз в GitLab: в описании хеш манифеста.
-- README «Проверка фронтенда»: сверка с манифестом релиза, а не только с локальной сборкой.
-- **По желанию (S):** SRI для `app.js` и `style.css` в `index.html` плюс import map с `integrity` для `crypto.js`/`keystore.js`. Защищает от подмены по пути (CDN, прокси), но не от самого сервера. Перегенерация атрибутов — шагом сборки.
-- Для самостоятельного хостинга (не Render) — раздел в документации с идеями конкурента: systemd-песочница, отключённый swap, `LimitCORE=0`, журналы без IP на reverse proxy.
+- `Dockerfile`: pin base images by digest, `-trimpath -buildvcs=false`, `SOURCE_DATE_EPOCH` from the commit time.
+- CI (`.gitlab-ci.yml`): a `reproducible` job: two builds, compare the binary's SHA-256. A `webhash.txt` artifact (output of `go run ./cmd/webhash`) for every tag.
+- GitLab release: the manifest hash in the description.
+- README "Frontend verification": compare against the release manifest, not only against a local build.
+- **Optional (S):** SRI for `app.js` and `style.css` in `index.html` plus an import map with `integrity` for `crypto.js`/`keystore.js`. Protects against substitution along the path (CDN, proxy), but not against the server itself. Regenerating the attributes is a build step.
+- For self-hosting (not Render): a documentation section with the competitor's ideas: systemd sandbox, disabled swap, `LimitCORE=0`, reverse proxy logs without IPs.
 
-### Этап F. Ограничение злоупотреблений без хранения IP (M)
+### Stage F. Limiting abuse without storing IPs (M)
 
-Урок бага конкурента: каждая входящая команда проходит лимит **до** любой работы.
+The lesson from the competitor's bug: every incoming command goes through the limit **before** any work.
 
-- `internal/httpapi`: бюджет на соединение для всех WS-кадров, включая битый JSON и неизвестные типы. При превышении — закрытие с `rate_limited`. Тест: поток мусорных кадров закрывает соединение и не создаёт работы в `chat`.
-- Раздельные бюджеты create / join / upgrade (пункт шага 9 `PLAN.md`): восстановление действующей сессии не делит квоту с созданием комнат.
-- Лимит на клиента без хранения IP: in-memory token bucket по ключу `HMAC(ключ процесса, X-Forwarded-For от Render)`. Ключ меняется при рестарте, записи живут не дольше 10 минут, нигде не логируются. В `SECURITY.md` честно написать, что IP обрабатывается кратковременно. Доверять `X-Forwarded-For` только при `TRUST_PROXY=render`.
-- Тесты: два «клиента» с разными forwarded-адресами не делят бюджет. Без `TRUST_PROXY` заголовок игнорируется.
+- `internal/httpapi`: a per-connection budget for all WS frames, including malformed JSON and unknown types. When exceeded, close with `rate_limited`. Test: a stream of garbage frames closes the connection and creates no work in `chat`.
+- Separate create / join / upgrade budgets (`PLAN.md` step 9 item): recovering a valid session does not share a quota with room creation.
+- A per-client limit without storing IPs: an in-memory token bucket keyed by `HMAC(process key, X-Forwarded-For from Render)`. The key changes on restart, entries live at most 10 minutes and are never logged. `SECURITY.md` must state honestly that the IP is processed briefly. Trust `X-Forwarded-For` only with `TRUST_PROXY=render`.
+- Tests: two "clients" with different forwarded addresses do not share a budget. Without `TRUST_PROXY` the header is ignored.
 
-## 3. Порядок и связь с основным планом
+## 3. Order and relation to the main plan
 
-| Очередь | Этап | Зависимости | Пересечение с `docs/PLAN.md` |
+| Queue | Stage | Dependencies | Overlap with `docs/PLAN.md` |
 |---|---|---|---|
-| 1 | A1–A4 | — | Шаг 9 (логи), шаг 12 (документация) |
-| 2 | C1 | — | Статус «физическая очистка отложена», retention |
-| 3 | B | Решение B0 | — |
-| 4 | F | — | Шаг 9 (бюджеты, команды, IP) |
-| 5 | E | — | Шаг 11 (CI), шаг 12 (публикация) |
-| 6 | D1–D3, C2 | Решения D1, D2, D3, C2 | — |
+| 1 | A1–A4 | — | Step 9 (logs), step 12 (documentation) |
+| 2 | C1 | — | Status "physical cleanup deferred", retention |
+| 3 | B | Decision B0 | — |
+| 4 | F | — | Step 9 (budgets, commands, IP) |
+| 5 | E | — | Step 11 (CI), step 12 (publication) |
+| 6 | D1–D3, C2 | Decisions D1, D2, D3, C2 | — |
 
-После каждого этапа: обновить `VERIFICATION.md` (что и где проверено), прогнать GitLab CI с PostgreSQL и проверить в браузере на Render.
+After each stage: update `VERIFICATION.md` (what was checked and where), run GitLab CI with PostgreSQL and check in the browser on Render.
 
-## 4. Решения, которые нужны до старта
+## 4. Decisions needed before starting
 
-1. **B0:** один размер 4096 или три класса 256/1024/4096.
-2. **C1:** срок `PURGE_AFTER` после закрытия комнаты (предложение — 10 минут).
-3. **C2:** нужны ли исчезающие сообщения и в каком виде.
-4. **D1:** паника — только у себя или завершает комнату для обоих.
-5. **D2:** очистка буфера — автоматически через 60 с или только по кнопке.
-6. **D3:** блокировка по неактивности — выключена или паника через N минут.
-7. **F:** допустима ли кратковременная обработка IP (HMAC, только в памяти, до 10 минут) ради лимитов на клиента.
+1. **B0:** a single size of 4096 or three classes 256/1024/4096.
+2. **C1:** the `PURGE_AFTER` period after a room closes (proposal: 10 minutes).
+3. **C2:** whether disappearing messages are wanted and in what form.
+4. **D1:** panic only on one's own side or ending the room for both.
+5. **D2:** clipboard clearing automatically after 60 s or only via a button.
+6. **D3:** inactivity lock off or panic after N minutes.
+7. **F:** whether brief IP processing (HMAC, in memory only, up to 10 minutes) is acceptable for per-client limits.

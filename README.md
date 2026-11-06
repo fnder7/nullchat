@@ -1,22 +1,22 @@
 # nullchat
 
-Временный чат на двоих без регистрации. Собственный backend на Go, WebSocket и небольшой веб-интерфейс, встроенный в исполняемый файл. Matrix не используется.
+A temporary chat for two with no sign-up. A custom Go backend, WebSocket and a small web interface embedded in the executable. Matrix is not used.
 
-Создай комнату → отправь одноразовую ссылку → общайся до конца таймера.
+Create a room → send a one-time link → talk until the timer runs out.
 
-## Запуск
+## Running
 
-Для быстрого запуска требуются Docker с Compose plugin и OpenSSL. Для запуска и тестов напрямую на хосте нужны Go 1.25 или новее (pgx v5.11.0) и PostgreSQL 17. При первой сборке будут загружены внешние зависимости. Сервер работает с PostgreSQL; режима запуска без БД нет.
+The quick start needs Docker with the Compose plugin and OpenSSL. Running and testing directly on the host needs Go 1.25 or newer (pgx v5.11.0) and PostgreSQL 17. The first build downloads external dependencies. The server works with PostgreSQL; there is no mode without a database.
 
-Быстрый запуск всего локального окружения (порты 5432 и 8080 должны быть свободны):
+Quick start of the whole local environment (ports 5432 and 8080 must be free):
 
 ```bash
 ./run.sh
 ```
 
-Скрипт при первом запуске создаёт `.env` с локальным ключом, затем собирает и запускает PostgreSQL, миграции и приложение. Логи остаются в текущем терминале; для остановки нажми `Ctrl+C`. Данные PostgreSQL сохраняются в named volume между запусками.
+On first run the script creates `.env` with a local key, then builds and starts PostgreSQL, the migrations and the application. Logs stay in the current terminal; press `Ctrl+C` to stop. PostgreSQL data persists in a named volume between runs.
 
-Точная ручная последовательность приёмки для разработки:
+The exact manual acceptance sequence for development:
 
 ```bash
 export IDEMPOTENCY_ENCRYPTION_KEY="$(openssl rand -hex 32)"
@@ -26,36 +26,36 @@ curl --fail http://127.0.0.1:8080/readyz
 TEST_DATABASE_URL='postgres://nullchat:nullchat@127.0.0.1:5432/nullchat_test?sslmode=disable' go test -tags=integration -race ./internal/storage/postgres
 ```
 
-Сгенерированный здесь ключ предназначен только для разработки. Для deployment сгенерируй и сохрани отдельный секрет вне репозитория и передавай его через окружение из хранилища секретов. `IDEMPOTENCY_ENCRYPTION_KEY` — 32 случайных байта в виде 64 hex-символов, общий для миграций и API. Сохраняй тот же ключ при рестартах: его замена делает сохранённые зашифрованные ответы create/join нечитаемыми. Не коммить ключ, не выводи его в логи; вывод `docker compose config` тоже содержит подставленные секреты.
+The key generated here is for development only. For a deployment, generate and store a separate secret outside the repository and pass it through the environment from a secret store. `IDEMPOTENCY_ENCRYPTION_KEY` is 32 random bytes as 64 hex characters, shared by the migrations and the API. Keep the same key across restarts: replacing it makes the stored encrypted create/join responses unreadable. Do not commit the key or print it to logs; the output of `docker compose config` also contains the substituted secrets.
 
-Первый `up` применяет миграции в foreground; успешный выход migration job завершает команду. Второй обеспечивает запуск БД и API. API ждёт здоровую БД и успешную миграцию. `/readyz` проверяет соединение с БД, `/healthz` — только жизнь процесса; readiness не заменяет миграцию и не проверяет схему. Если запрос сразу после `up -d` попал до открытия порта, повтори его.
+The first `up` applies the migrations in the foreground; a successful exit of the migration job ends the command. The second one starts the database and the API. The API waits for a healthy database and a successful migration. `/readyz` checks the database connection, `/healthz` only that the process is alive; readiness does not replace migration and does not check the schema. If a request right after `up -d` arrived before the port opened, repeat it.
 
-Compose использует локальные credentials `nullchat:nullchat` и `sslmode=disable` только для разработки. В deployment нужны собственные credentials, настройки TLS и подключения. Scratch-образ содержит системные CA roots для обычной проверки PostgreSQL TLS. Для private CA собери единый PEM bundle с публичными и внутренними CA и смонтируй его read-only поверх `/etc/ssl/certs/ca-certificates.crt` (либо в другой путь с `SSL_CERT_FILE`); не отключай проверку сертификата. PostgreSQL хранит данные в named volume `postgres_data`; обычные `stop`, `restart` и `down` сохраняют его. `down -v` удаляет volume вместе с данными. Скрипт `deploy/postgres/init-test-db.sql` создаёт `nullchat_test` только при первой инициализации пустого volume. Для существующего volume без тестовой БД создай её отдельно: `docker compose exec postgres createdb -U nullchat nullchat_test`.
+Compose uses the local credentials `nullchat:nullchat` and `sslmode=disable` for development only. A deployment needs its own credentials, TLS and connection settings. The scratch image contains the system CA roots for ordinary PostgreSQL TLS verification. For a private CA, build a single PEM bundle with the public and internal CAs and mount it read-only over `/etc/ssl/certs/ca-certificates.crt` (or at another path with `SSL_CERT_FILE`); do not disable certificate verification. PostgreSQL keeps its data in the named volume `postgres_data`; ordinary `stop`, `restart` and `down` preserve it. `down -v` removes the volume along with the data. The script `deploy/postgres/init-test-db.sql` creates `nullchat_test` only when an empty volume is first initialized. For an existing volume without the test database, create it separately: `docker compose exec postgres createdb -U nullchat nullchat_test`.
 
-Для запуска Go-сервера на хосте оставь работающим только PostgreSQL, задай оба обязательных параметра и примени миграции явно:
+To run the Go server on the host, leave only PostgreSQL running, set both required parameters and apply the migrations explicitly:
 
 ```sh
 docker compose stop nullchat
 docker compose up -d postgres
 export DATABASE_URL='postgres://nullchat:nullchat@127.0.0.1:5432/nullchat?sslmode=disable'
-# IDEMPOTENCY_ENCRYPTION_KEY уже задан выше или загружен из хранилища секретов.
+# IDEMPOTENCY_ENCRYPTION_KEY is already set above or loaded from a secret store.
 go run ./cmd/migrate
 go run ./cmd/server
 ```
 
-Миграции встроены в `cmd/migrate`, применяются по версиям под advisory lock; повторный запуск — no-op для уже применённых версий. Сервер сам миграции не запускает.
+Migrations are embedded in `cmd/migrate` and applied by version under an advisory lock; a repeated run is a no-op for versions already applied. The server does not run migrations itself.
 
-Открой [http://127.0.0.1:8080](http://127.0.0.1:8080). Создай комнату и открой приглашение в другом браузере, приватном окне или отдельной вкладке. Для проверки TTL выбери «1 минута».
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). Create a room and open the invite in another browser, a private window or a separate tab. To check the TTL, choose "1 minute".
 
-Сессия хранится в `sessionStorage` конкретной вкладки. Обновление страницы сохраняет доступ; копирование адреса `#room=…` не передаёт сессию. Для приглашения используй кнопку «Скопировать ссылку».
+The session is stored in the `sessionStorage` of a specific tab. Reloading the page keeps access; copying the `#room=…` address does not transfer the session. Use the "Copy link" button for the invite.
 
-Другой адрес:
+A different address:
 
 ```sh
 ADDR=127.0.0.1:9000 go run ./cmd/server
 ```
 
-Собрать оба бинарника (окружение с БД и ключом остаётся обязательным):
+Build both binaries (the environment with the database and the key is still required):
 
 ```sh
 go build -buildvcs=false -o bin/nullchat ./cmd/server
@@ -64,65 +64,65 @@ go build -buildvcs=false -o bin/migrate ./cmd/migrate
 ./bin/nullchat
 ```
 
-Финальный Docker-образ содержит `/nullchat` со встроенным интерфейсом, `/migrate` со встроенными SQL-миграциями и системный CA bundle. Оба бинарника статические; API и migration job работают без root.
+The final Docker image contains `/nullchat` with the embedded interface, `/migrate` with the embedded SQL migrations and the system CA bundle. Both binaries are static; the API and the migration job run without root.
 
-Настройки: `ADDR` — `127.0.0.1:8080` на хосте (`0.0.0.0:8080` в образе), `DB_MAX_CONNS` — 8, `DB_OPERATION_TIMEOUT` — `5s`, `EXPIRY_INTERVAL` — `1s`. Число соединений и интервалы должны быть положительными. Лимиты комнат/сообщений не настраиваются этими переменными.
+Settings: `ADDR` is `127.0.0.1:8080` on the host (`0.0.0.0:8080` in the image), `DB_MAX_CONNS` is 8, `DB_OPERATION_TIMEOUT` is `5s`, `EXPIRY_INTERVAL` is `1s`. The connection count and the intervals must be positive. Room/message limits are not configured by these variables.
 
-Для публичного развёртывания нужен HTTPS reverse proxy. По умолчанию демо доступно только на loopback. Frontend и API обслуживаются с одного origin; Node.js и отдельный frontend-сервер для запуска не нужны.
+A public deployment needs an HTTPS reverse proxy. By default the demo is reachable only on loopback. The frontend and the API are served from one origin; Node.js and a separate frontend server are not needed to run it.
 
-## Что работает
+## What works
 
-- Комнаты на двоих с TTL от 1 до 60 минут, отсчитываемым с создания.
-- Отдельные сессии создателя и гостя; приглашение используется один раз.
-- Переписка через WebSocket, подтверждения приёма и защита от дубликатов.
-- Автоматическое переподключение и восстановление истории действующей комнаты.
-- PostgreSQL сохраняет комнаты, сессии, приглашения и подтверждённые сообщения при рестарте backend. Graceful shutdown не завершает разговор.
-- `ack` выдаётся после commit сообщения в PostgreSQL; это не подтверждение доставки или прочтения собеседником.
-- Create/join поддерживают необязательный `Idempotency-Key` (32–128 печатных ASCII-символов); браузер повторяет запрос с прежним ключом. Совпадающий запрос возвращает исходные credentials, изменённый — `idempotency_key_conflict`.
-- Закрытие комнаты по TTL или командой любого участника.
-- Ограниченные очереди событий, heartbeat, базовые лимиты и graceful shutdown.
-- Сквозное шифрование сообщений и названия в браузере, необязательный пароль комнаты и код сверки ключей.
-- Адаптивный русскоязычный интерфейс, состояния ошибок и завершения чата.
+- Rooms for two with a TTL of 1 to 60 minutes, counted from creation.
+- Separate sessions for the creator and the guest; the invite is used once.
+- Messaging over WebSocket, receipt acknowledgements and duplicate protection.
+- Automatic reconnection and history recovery for an active room.
+- PostgreSQL keeps rooms, sessions, invites and acknowledged messages across backend restarts. Graceful shutdown does not end the conversation.
+- `ack` is issued after the message is committed to PostgreSQL; it does not confirm delivery to or reading by the contact.
+- Create/join support an optional `Idempotency-Key` (32–128 printable ASCII characters); the browser retries the request with the same key. A matching request returns the original credentials, a changed one gets `idempotency_key_conflict`.
+- Closing the room on TTL or by command of either participant.
+- Bounded event queues, heartbeat, basic limits and graceful shutdown.
+- End-to-end encryption of messages and the title in the browser, an optional room password and a key safety code.
+- A responsive English interface, error states and chat ending.
 
-## Границы демо
+## Demo limits
 
-Один экземпляр backend с PostgreSQL и локальным hub событий. Максимум 100 активных комнат, 500 сообщений на комнату и 400 соединений. Повторное подключение получает всю историю. Outbox, durable event replay, paging, курсоры и несколько экземпляров/сервисов отложены. Сбой после commit до broadcast может оставить подключённый клиент без события до reconnect; снимок восстановит сохранённые сообщения. Durability зависит от настроек PostgreSQL и диска.
+One backend instance with PostgreSQL and a local event hub. At most 100 active rooms, 500 messages per room and 400 connections. A reconnect receives the whole history. Outbox, durable event replay, paging, cursors and multiple instances/services are deferred. A failure after commit but before broadcast can leave a connected client without the event until it reconnects; the snapshot restores the stored messages. Durability depends on the PostgreSQL and disk settings.
 
-Сессия живёт до окончания комнаты, даже если вкладка закрыта. Возврат после закрытия зависит от того, восстановит ли браузер её `sessionStorage`; гарантируется обновление существующей вкладки. Неотправленные сообщения сохраняются только в памяти открытой страницы. Повтор create/join безопасен только с прежним ключом и запросом, до окончания комнаты и не более 24 часов после запроса. Без ключа потерянный ответ не восстанавливается автоматически.
+A session lives until the room ends, even if the tab is closed. Returning after closing depends on whether the browser restores its `sessionStorage`; reloading an existing tab is guaranteed. Unsent messages are kept only in the memory of the open page. Retrying create/join is safe only with the same key and request, before the room ends and no more than 24 hours after the request. Without a key, a lost response is not recovered automatically.
 
-Сервис не запрашивает персональные данные и не пишет прикладные access-логи. Сообщения и название шифруются в браузере (AES-256-GCM, ключ из эфемерного ECDH P-256, подтверждённого секретом из ссылки и необязательным паролем). Сервер и БД видят только шифротекст, размеры с точностью до 256 байт, время и участников. Веб-E2EE доверяет коду, который отдаёт сервер: если сервер скомпрометирован, он может отдать изменённый JavaScript. Session/invite токены индексируются по SHA-256, ответы идемпотентности зашифрованы AES-GCM. Expiry worker физически удаляет истёкшие строки `idempotency_requests`; после удаления тот же ключ можно использовать как новый. TTL/end отзывают доступ, но остальные строки комнаты не удаляются: полная физическая очистка, retention истории, WAL и backup policy ещё не реализованы. Участник может сохранить переписку; журналирование reverse proxy учитывается отдельно. Кто что видит — в [SECURITY.md](docs/SECURITY.md).
+The service does not ask for personal data and does not write application access logs. Messages and the title are encrypted in the browser (AES-256-GCM, a key from ephemeral ECDH P-256 authenticated by the secret from the link and an optional password). The server and the database see only ciphertext, sizes to within 256 bytes, times and participants. Web E2EE trusts the code the server serves: if the server is compromised, it can serve modified JavaScript. Session/invite tokens are indexed by SHA-256, idempotency responses are encrypted with AES-GCM. The expiry worker physically deletes expired `idempotency_requests` rows; after deletion the same key can be used as a new one. TTL/end revoke access, but the other room rows are not deleted: full physical cleanup, history retention, WAL and backup policy are not implemented yet. A participant can save the conversation; reverse proxy logging is a separate matter. Who sees what: [SECURITY.md](docs/SECURITY.md).
 
-## Сквозное шифрование
+## End-to-end encryption
 
-- Секрет ссылки (`#…&k=…`) не уходит на сервер. С паролем ссылки недостаточно: сервер сверяет `join_proof`, не узнавая пароль, и после 5 неудачных попыток аннулирует приглашение.
-- Ключ сообщений появляется после входа гостя, поэтому писать до этого нельзя. Код сверки в боковой панели должен совпадать у обоих — сверь его голосом, если важно исключить перехват.
-- Ключи создаются неизвлекаемыми и лежат в IndexedDB до конца комнаты (или до следующего открытия страницы после её окончания). Скрипт, попавший на страницу, может ими пользоваться, но не скопировать. CSP с Trusted Types блокирует вставку HTML и `eval`.
-- Подробности и модель угроз — в [дизайне E2EE](docs/superpowers/specs/2026-11-06-e2ee-design.md).
+- The link secret (`#…&k=…`) never goes to the server. With a password, the link alone is not enough: the server checks `join_proof` without learning the password, and after 5 failed attempts revokes the invite.
+- The message key appears once the guest joins, so you cannot write before that. The safety code in the sidebar must match on both sides: compare it by voice if ruling out interception matters.
+- Keys are created non-extractable and stay in IndexedDB until the room ends (or until the next page open after it ends). A script injected into the page can use them but not copy them. CSP with Trusted Types blocks HTML injection and `eval`.
+- Details and the threat model: [E2EE design](docs/superpowers/specs/2026-11-06-e2ee-design.md).
 
-### Проверка фронтенда
+### Frontend verification
 
-Чтобы убедиться, что развёрнутый сервис отдаёт тот же код, что в репозитории:
+To make sure the deployed service serves the same code as the repository:
 
 ```sh
 go run ./cmd/webhash
 curl -s https://host/app.js | sha256sum
 ```
 
-Сравни хеш каждого файла с выводом `webhash` (`index.html` отдаётся по адресу `/`). Это обнаруживает подмену задним числом, но не предотвращает её.
+Compare the hash of each file with the `webhash` output (`index.html` is served at `/`). This detects substitution after the fact but does not prevent it.
 
-## Развёртывание на Render
+## Deploying on Render
 
-В корне лежит Blueprint [`render.yaml`](render.yaml): веб-сервис из `Dockerfile` и PostgreSQL, оба на бесплатном тарифе в регионе Frankfurt.
+The root contains the Blueprint [`render.yaml`](render.yaml): a web service from the `Dockerfile` and PostgreSQL, both on the free plan in the Frankfurt region.
 
-1. В Render: **New → Blueprint**, выбрать этот репозиторий и ветку.
-2. Render создаст БД `nullchat-db`, подставит `DATABASE_URL`, сам сгенерирует `IDEMPOTENCY_ENCRYPTION_KEY` и включит `MIGRATE_ON_START=true`: на бесплатном тарифе нет pre-deploy шага, поэтому сервер применяет встроенные миграции перед стартом.
-3. После деплоя проверить `https://<сервис>.onrender.com/readyz`. HTTPS даёт Render; WebCrypto без HTTPS не работает.
+1. In Render: **New → Blueprint**, pick this repository and branch.
+2. Render creates the `nullchat-db` database, injects `DATABASE_URL`, generates `IDEMPOTENCY_ENCRYPTION_KEY` itself and sets `MIGRATE_ON_START=true`: the free plan has no pre-deploy step, so the server applies the embedded migrations before starting.
+3. After the deploy, check `https://<service>.onrender.com/readyz`. Render provides HTTPS; WebCrypto does not work without HTTPS.
 
-Ограничения бесплатного тарифа: сервис засыпает примерно через 15 минут без трафика (WebSocket рвётся, клиент переподключается, комнаты и история сохраняются в БД), первый запрос после сна идёт около минуты, бесплатная БД удаляется через 30 дней. Экземпляр должен быть ровно один: hub событий живёт в памяти процесса.
+Free plan limits: the service sleeps after about 15 minutes without traffic (the WebSocket drops, the client reconnects, rooms and history persist in the database), the first request after sleep takes about a minute, and the free database is deleted after 30 days. There must be exactly one instance: the event hub lives in process memory.
 
-Если в логах `room expiry failed; will retry`, поле `cause` подскажет причину: `sqlstate 42P01` — не применены миграции (включи `MIGRATE_ON_START` или запусти `/migrate`), `connect` или `connection` — БД недоступна.
+If the logs show `room expiry failed; will retry`, the `cause` field hints at the reason: `sqlstate 42P01` means the migrations were not applied (enable `MIGRATE_ON_START` or run `/migrate`), `connect` or `connection` means the database is unreachable.
 
-## Проверки
+## Checks
 
 ```sh
 bash scripts/run_test.sh
@@ -134,39 +134,39 @@ node --test web/crypto.test.mjs
 docker compose run --rm test
 ```
 
-Сервис `test` из профиля `test` явно запускается командой выше, использует Dockerfile target `build` с C toolchain и выполняет `go test -tags=integration -race ./internal/storage/postgres` против отдельной `nullchat_test`. Тесты сами применяют миграции и очищают таблицы: никогда не направляй `TEST_DATABASE_URL` на рабочую БД и не запускай два набора тестов одновременно против одной БД. Без `TEST_DATABASE_URL` проверки, которым нужна БД, пропускаются даже с тегом `integration`.
+The `test` service from the `test` profile is started explicitly by the command above, uses the Dockerfile target `build` with a C toolchain and runs `go test -tags=integration -race ./internal/storage/postgres` against a separate `nullchat_test`. The tests apply the migrations themselves and wipe the tables: never point `TEST_DATABASE_URL` at a production database and do not run two test suites at once against the same database. Without `TEST_DATABASE_URL`, checks that need a database are skipped even with the `integration` tag.
 
-Тесты проверяют криптомодуль (одинаковые ключи и коды у сторон, отказ при подмене ключа или AAD, неизвлекаемость, размеры шифротекстов, совпадающие с `envelope.go`), проверку `join_proof` и аннулирование приглашения, заголовки безопасности, конкурентный вход, дедупликацию, rollback, TTL, границу snapshot/subscribe, миграции, commit-before-ack и восстановление после рестарта процесса. Нужен доступ к локальным TCP-портам; для `-race` — поддерживаемая платформа и C toolchain. Точные результаты и ограничения: [VERIFICATION.md](docs/VERIFICATION.md).
+The tests cover the crypto module (identical keys and codes on both sides, rejection on key or AAD substitution, non-extractability, ciphertext sizes matching `envelope.go`), `join_proof` verification and invite revocation, security headers, concurrent join, deduplication, rollback, TTL, the snapshot/subscribe boundary, migrations, commit-before-ack and recovery after a process restart. They need access to local TCP ports; `-race` needs a supported platform and a C toolchain. Exact results and limits: [VERIFICATION.md](docs/VERIFICATION.md).
 
-Ручной сценарий:
+Manual scenario:
 
-1. Создать комнату, открыть приглашение в другом окне и войти.
-2. Отправить сообщения в обе стороны, обновить одну вкладку и проверить историю.
-3. Повторно открыть приглашение: третий участник войти не должен.
-4. Отключить сеть, вернуть её и проверить восстановление соединения.
-   Затем выполнить `docker compose restart nullchat`: до TTL обе вкладки должны восстановить прежние сессии и подтверждённую историю. Проверить `curl --fail http://127.0.0.1:8080/readyz`.
-5. Завершить чат: оба участника теряют доступ, история исчезает из интерфейса.
-6. Создать комнату на минуту и проверить автоматическое закрытие.
+1. Create a room, open the invite in another window and join.
+2. Send messages both ways, reload one tab and check the history.
+3. Open the invite again: a third participant must not get in.
+4. Disconnect the network, restore it and check that the connection recovers.
+   Then run `docker compose restart nullchat`: before the TTL, both tabs must restore their sessions and the acknowledged history. Check `curl --fail http://127.0.0.1:8080/readyz`.
+5. End the chat: both participants lose access, the history disappears from the interface.
+6. Create a one-minute room and check that it closes automatically.
 
-## Устройство проекта
+## Project layout
 
 ```text
-cmd/server/       конфигурация, сборка зависимостей, запуск и остановка
-cmd/migrate/      явный запуск встроенных SQL-миграций
-cmd/webhash/      хеши встроенного фронтенда для сверки развёртывания
-internal/chat/    модели, валидация и порт Application
-internal/config/  проверка окружения без вывода секретов
-internal/storage/postgres/ транзакции, persistence, миграции и integration tests
-internal/storage/memory/   адаптер для демо/тестов, не runtime сервера
-internal/realtime/ ограниченный in-process hub событий
-internal/httpapi/ HTTP, WebSocket, аутентификация и ограничения транспорта
-web/              HTML, CSS и JavaScript (crypto.js — E2EE, keystore.js — ключи в IndexedDB), встроенные через go:embed
-docs/             архитектурные решения, план и архив исходного ТЗ
+cmd/server/       configuration, dependency wiring, startup and shutdown
+cmd/migrate/      explicit run of the embedded SQL migrations
+cmd/webhash/      hashes of the embedded frontend for verifying a deployment
+internal/chat/    models, validation and the Application port
+internal/config/  environment validation without printing secrets
+internal/storage/postgres/ transactions, persistence, migrations and integration tests
+internal/storage/memory/   adapter for demo/tests, not the server runtime
+internal/realtime/ bounded in-process event hub
+internal/httpapi/ HTTP, WebSocket, authentication and transport limits
+web/              HTML, CSS and JavaScript (crypto.js is E2EE, keystore.js keeps keys in IndexedDB), embedded via go:embed
+docs/             architecture decisions, the plan and an archive of the original spec
 ```
 
-Прикладная логика не импортирует HTTP или WebSocket. Транспорт использует `chat.Application` через `httpapi.Chat`; PostgreSQL-адаптер владеет атомарными сценариями, SQL и транзакциями. Runtime собирается в `cmd/server`. Это один монолит; выделение gateway/core остаётся отдельным будущим этапом.
+Application logic does not import HTTP or WebSocket. The transport uses `chat.Application` through `httpapi.Chat`; the PostgreSQL adapter owns the atomic scenarios, SQL and transactions. The runtime is wired in `cmd/server`. It is a single monolith; a gateway/core split remains a separate future stage.
 
-- [Актуальное ТЗ](SPEC.md)
-- [Пошаговый план модернизации: PostgreSQL, надёжность и два сервиса](docs/PLAN.md)
-- [Архитектура и возможные два сервиса](docs/ARCHITECTURE.md)
-- [Исходное предложение с Matrix — архив](docs/archive/matrix-gateway-draft.md)
+- [Current spec](SPEC.md)
+- [Step-by-step modernization plan: PostgreSQL, reliability and two services](docs/PLAN.md)
+- [Architecture and a possible two-service split](docs/ARCHITECTURE.md)
+- [The original Matrix proposal (archive)](docs/archive/matrix-gateway-draft.md)

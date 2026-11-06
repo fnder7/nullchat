@@ -1,23 +1,23 @@
 # UI testing runbook for agents
 
-Инструкция для повторяемого ручного UI/E2E-прогона из
-[`UI_TEST_CASES.md`](UI_TEST_CASES.md). Не заменяет Go и PostgreSQL integration
-tests: UI проверяет пользовательский контракт, автоматические suites — инварианты
-и конкурентные сценарии.
+Instructions for a repeatable manual UI/E2E run of
+[`UI_TEST_CASES.md`](UI_TEST_CASES.md). It does not replace the Go and PostgreSQL
+integration tests: the UI run checks the user-facing contract, the automated suites
+check invariants and concurrent scenarios.
 
-## 1. Зафиксировать исходное состояние
+## 1. Record the initial state
 
 ```sh
 git status --short
 git rev-parse --short HEAD
 ```
 
-Не изменять и не удалять существующие пользовательские файлы. В отчете указать
-commit, браузер, дату и уже существовавшие изменения worktree.
+Do not modify or delete existing user files. In the report, state the commit,
+browser, date and any changes already present in the worktree.
 
-## 2. Поднять окружение
+## 2. Bring up the environment
 
-Создать отдельный development-секрет и не печатать/не коммитить его:
+Create a separate development secret and do not print or commit it:
 
 ```sh
 export IDEMPOTENCY_ENCRYPTION_KEY="$(openssl rand -hex 32)"
@@ -26,35 +26,35 @@ docker compose up --build -d postgres nullchat
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
-Не выполнять `docker compose down -v`: это удаляет тестовые данные volume. Для
-прогона используется только локальная development-БД из `compose.yaml`.
+Do not run `docker compose down -v`: it deletes the test data in the volume. The
+run uses only the local development DB from `compose.yaml`.
 
-## 3. Подготовить браузер
+## 3. Prepare the browser
 
-- Открыть `http://127.0.0.1:8080` в Chrome DevTools MCP.
-- Создателя, гостя и третьего пользователя открывать в разных isolated browser
-  contexts. Разные вкладки одного context могут разделять storage и не подходят
-  для проверки независимых участников.
-- До негативных сценариев проверить чистую консоль и успешную загрузку HTML,
-  CSS, JS и favicon.
-- Для каждого значимого шага сохранять фактический видимый текст, состояние
-  кнопок, счетчик сообщений и статус подключения.
+- Open `http://127.0.0.1:8080` in Chrome DevTools MCP.
+- Open the creator, the guest and the third user in separate isolated browser
+  contexts. Different tabs of one context can share storage and are not suitable
+  for checking independent participants.
+- Before the negative scenarios, check for a clean console and successful loading
+  of the HTML, CSS, JS and favicon.
+- For every significant step, record the actual visible text, button states, the
+  message counter and the connection status.
 
-## 4. Рекомендуемый порядок
+## 4. Recommended order
 
-1. Выполнить P0 `UI-01`—`UI-05` в комнате на 15 минут.
-2. В той же комнате выполнить offline/reconnect и ручной retry (`UI-06`,
-   `NET-01`—`NET-05`). Network emulation сама по себе может не закрыть уже
-   открытый WebSocket; после включения Offline нужно принудительно закрыть
-   тестовый socket или остановить backend.
-3. Перезапустить только backend и проверить persistence (`UI-07`, `NET-06`):
+1. Run P0 `UI-01`–`UI-05` in a 15-minute room.
+2. In the same room, run offline/reconnect and the manual retry (`UI-06`,
+   `NET-01`–`NET-05`). Network emulation alone may not close an already open
+   WebSocket; after enabling Offline, force-close the test socket or stop the
+   backend.
+3. Restart only the backend and check persistence (`UI-07`, `NET-06`):
 
    ```sh
    docker compose restart nullchat
    ```
 
-4. Остановить PostgreSQL, проверить create/send error, затем вернуть БД и
-   повторить операцию (`ROOM-05`, `NET-07`, `NET-08`):
+4. Stop PostgreSQL, check the create/send error, then bring the DB back and
+   repeat the operation (`ROOM-05`, `NET-07`, `NET-08`):
 
    ```sh
    docker compose stop postgres
@@ -62,54 +62,55 @@ curl --fail http://127.0.0.1:8080/readyz
    docker compose ps
    ```
 
-5. Завершить комнату гостем, затем отдельную комнату создателем (`END-01`,
-   `END-02`). Обновить страницу и повторить invite после завершения.
-6. Создать отдельную комнату с TTL 1 минута. Дождаться серверного события, не
-   подменяя его изменением часов браузера (`END-05`—`END-07`).
-7. Выполнить validation, XSS, storage, privacy и responsive кейсы.
-8. Проверить viewport `390x844` и desktop. Сравнить
-   `document.documentElement.scrollWidth` с `innerWidth`.
-9. Выполнить Lighthouse snapshot для главной страницы и сохранить названия всех
+5. End a room as the guest, then a separate room as the creator (`END-01`,
+   `END-02`). Reload the page and retry the invite after the end.
+6. Create a separate room with a 1-minute TTL. Wait for the server event; do not
+   fake it by changing the browser clock (`END-05`–`END-07`).
+7. Run the validation, XSS, storage, privacy and responsive cases.
+8. Check the `390x844` viewport and desktop. Compare
+   `document.documentElement.scrollWidth` with `innerWidth`.
+9. Run a Lighthouse snapshot of the home page and record the names of all
    failed accessibility audits.
 
-## 5. Предельные сценарии
+## 5. Limit scenarios
 
-`MSG-11` не следует выполнять отправкой 499 сообщений с паузой: rate limit
-сделает прогон долгим и нестабильным. Допустима подготовка fixture напрямую в
-development PostgreSQL:
+Do not run `MSG-11` by sending 499 messages with pauses: the rate limit makes the
+run long and flaky. Preparing a fixture directly in the development PostgreSQL is
+acceptable:
 
-1. Через UI создать отдельную комнату и сохранить ее `room_id` и
-   `participant_id` без session/invite token в отчете.
-2. Вставить 499 тестовых сообщений с последовательностями `1..499`, выставить
-   `rooms.message_count = 499`, `next_message_sequence = 500`, а
+1. Create a separate room through the UI and record its `room_id` and
+   `participant_id`, without the session/invite token, in the report.
+2. Insert 499 test messages with sequences `1..499`, set
+   `rooms.message_count = 499`, `next_message_sequence = 500` and
    `sessions.last_send_at = NULL`.
-3. Обновить UI: он должен показать `499 / 500` и 499 сообщений.
-4. Отправить через UI 500-е сообщение, затем после rate-limit интервала — 501-е.
-5. Ожидать `500 / 500` и неотправленное 501-е сообщение с причиной
+3. Reload the UI: it must show `499 / 500` and 499 messages.
+4. Send the 500th message through the UI, then, after the rate-limit interval,
+   the 501st.
+5. Expect `500 / 500` and an unsent 501st message with the reason
    `message_limit`.
 
-Fixture создается только в локальной development-БД. Никогда не выполнять этот
-SQL против production или общей БД.
+The fixture is created only in the local development DB. Never run this SQL
+against production or a shared DB.
 
-Идемпотентность create/join можно проверить из страницы повтором одинакового
-fetch с одним `Idempotency-Key`. В отчете сравнивать только room/session equality;
-не выводить сами session и invite tokens.
+Create/join idempotency can be checked from the page by repeating an identical
+fetch with the same `Idempotency-Key`. In the report, compare only room/session
+equality; do not print the session and invite tokens themselves.
 
 ## 6. Privacy anti-enumeration
 
-- Существующий и случайный `#room=<64 hex>` проверять в чистых contexts без
+- Check an existing and a random `#room=<64 hex>` in clean contexts without
   `sessionStorage`.
-- Сравнивать не только текст, но и Network: открытие `#room` без сессии не должно
-  обращаться к backend за комнатой.
-- Для invite сравнивать использованный, закрытый и случайный 64-символьный hex
-  token. Все должны давать одинаковое публичное состояние без названия,
-  участников и других данных комнаты.
-- Успешный вход по действующему одноразовому приглашению не считается утечкой:
-  possession of the invite предоставляет предусмотренный доступ.
+- Compare not only the text but also Network: opening `#room` without a session
+  must not contact the backend about the room.
+- For invites, compare a used, a closed and a random 64-character hex token. All
+  must give the same public state, without the title, participants or any other
+  room data.
+- A successful join with a valid one-time invite is not a leak: possession of the
+  invite grants the intended access.
 
-## 7. Автоматический baseline
+## 7. Automated baseline
 
-После UI-прогона выполнить:
+After the UI run, execute:
 
 ```sh
 go test -race ./...
@@ -118,19 +119,19 @@ node --check web/app.js
 docker compose run --rm test
 ```
 
-Без `TEST_DATABASE_URL` локальные PostgreSQL tests могут быть пропущены, поэтому
-Compose test service обязателен для полного прогона.
+Without `TEST_DATABASE_URL`, the local PostgreSQL tests may be skipped, so the
+Compose test service is mandatory for a full run.
 
-## 8. Отчет и завершение
+## 8. Report and wrap-up
 
-- Создать `docs/test-reports/YYYY-MM-DD-ui-regression.md` по шаблону из
+- Create `docs/test-reports/YYYY-MM-DD-ui-regression.md` from the template in
   `UI_TEST_CASES.md`.
-- У каждого кейса должен быть `PASS`, `FAIL` или `BLOCKED`. Не считать
-  непроверенный кейс успешным по коду или unit tests.
-- Для `FAIL` записать ожидаемый и фактический результат, минимальные шаги и
-  затронутую страницу.
-- Отделить ожидаемые console/network ошибки негативных сценариев от
-  необработанных ошибок приложения.
-- Оставить `postgres` и `nullchat` запущенными только если это полезно следующему
-  разработчику; явно сообщить их состояние. Не удалять volume без прямого
-  запроса пользователя.
+- Every case must have `PASS`, `FAIL` or `BLOCKED`. Do not count an unchecked
+  case as passed on the basis of code or unit tests.
+- For `FAIL`, record the expected and actual result, the minimal steps and the
+  affected page.
+- Separate the expected console/network errors of negative scenarios from
+  unhandled application errors.
+- Leave `postgres` and `nullchat` running only if that helps the next developer;
+  state their status explicitly. Do not delete the volume without a direct
+  request from the user.
