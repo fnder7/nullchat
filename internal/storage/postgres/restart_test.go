@@ -347,7 +347,7 @@ func TestServerRestartPreservesCommittedRoom(t *testing.T) {
 		unmigratedURL = parsed.String()
 	}
 	baseURL, stop = start(unmigratedURL, "1h")
-	response, err = http.Post(baseURL+"/api/v1/rooms", "application/json", strings.NewReader(`{}`))
+	response, err = http.Post(baseURL+"/api/v1/rooms", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatal(err)
 	}

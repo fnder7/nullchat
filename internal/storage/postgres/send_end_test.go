@@ -380,7 +380,7 @@ func TestSendCanceledContextPrecedesInvalidInput(t *testing.T) {
 
 func TestConcurrentSendSequences(t *testing.T) {
 	s, creator := newCreatedService(t)
-	guest, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken})
+	guest, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,14 +454,14 @@ FROM rooms WHERE id = $1`, creator.Room.ID).Scan(&got, &closed, &revoked, &consu
 			t.Fatalf("subscribe after terminal: %v", err)
 		}
 	}
-	if _, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken}); !errors.Is(err, chat.ErrUnavailable) {
+	if _, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken)); !errors.Is(err, chat.ErrUnavailable) {
 		t.Fatalf("join after terminal: %v", err)
 	}
 }
 
 func TestEndRevokesBothSessionsAndInvite(t *testing.T) {
 	s, creator := newCreatedService(t)
-	guest, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken})
+	guest, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func TestEndRevokesBothSessionsAndInvite(t *testing.T) {
 
 func TestExpiryRevokesAccessWithoutPriorSweep(t *testing.T) {
 	s, creator := newCreatedService(t)
-	guest, err := s.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken})
+	guest, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -699,7 +699,7 @@ func TestClosePreservesRoomsSessionsAndPool(t *testing.T) {
 	if messages := receiveEvent(t, ch, "snapshot").Payload.(chat.SnapshotEvent).Room.Messages; len(messages) != 1 || messages[0].Ciphertext != hello {
 		t.Fatalf("history after Close: %+v", messages)
 	}
-	if _, err := reconnected.Join(testContext, chat.JoinInput{InviteToken: creator.InviteToken}); err != nil {
+	if _, err := reconnected.Join(testContext, chattest.JoinInput(creator.InviteToken)); err != nil {
 		t.Fatalf("Close consumed invite: %v", err)
 	}
 }

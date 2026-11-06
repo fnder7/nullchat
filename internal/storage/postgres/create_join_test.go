@@ -50,15 +50,37 @@ func createRoom(t *testing.T, s *Service, key string) chat.Credentials {
 	return c
 }
 
+// Encrypted fields are random, but a retry with the same Idempotency-Key must
+// resend the identical body (as the browser does). These helpers therefore
+// return one stable request per key, so tests can say "the same request" by
+// calling them again.
+var (
+	requestsMu     sync.Mutex
+	createRequests = map[string]chat.CreateInput{}
+	joinRequests   = map[[2]string]chat.JoinInput{}
+)
+
 func createInput(key string) chat.CreateInput {
+	requestsMu.Lock()
+	defer requestsMu.Unlock()
+	if in, ok := createRequests[key]; ok && key != "" {
+		return in
+	}
 	in := chattest.CreateInput(30)
 	in.IdempotencyKey = key
+	createRequests[key] = in
 	return in
 }
 
 func joinInput(invite, key string) chat.JoinInput {
+	requestsMu.Lock()
+	defer requestsMu.Unlock()
+	if in, ok := joinRequests[[2]string{invite, key}]; ok && key != "" {
+		return in
+	}
 	in := chattest.JoinInput(invite)
 	in.IdempotencyKey = key
+	joinRequests[[2]string{invite, key}] = in
 	return in
 }
 
@@ -677,7 +699,7 @@ WHERE datname = current_database()
 func TestSubscribeSnapshotAndParticipants(t *testing.T) {
 	s, creator := newCreatedService(t)
 	for _, seq := range []int{2, 1} {
-		if _, err := s.pool.Exec(testContext, `INSERT INTO messages (id, room_id, participant_id, client_message_id, sequence, text, created_at) VALUES ($1, $2, $3, $1, $4, 'hello', now())`, string(rune('a'+seq)), creator.Room.ID, creator.Self.ID, seq); err != nil {
+		if _, err := s.pool.Exec(testContext, `INSERT INTO messages (id, room_id, participant_id, client_message_id, sequence, ciphertext, created_at) VALUES ($1, $2, $3, $1, $4, 'opaque', now())`, string(rune('a'+seq)), creator.Room.ID, creator.Self.ID, seq); err != nil {
 			t.Fatal(err)
 		}
 	}
