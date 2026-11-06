@@ -99,7 +99,9 @@ func (s *Server) Handler(frontend http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Cache-Control", "no-store")
+		// no-transform: CDNs in front of the service (Render's edge) must not
+		// compress responses that carry session and invite tokens.
+		w.Header().Set("Cache-Control", "no-store, no-transform")
 		// Trusted Types with no policies: string-to-HTML/script sinks are blocked outright.
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'")
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")

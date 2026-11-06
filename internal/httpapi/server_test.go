@@ -55,8 +55,10 @@ func TestHTTPValidationAndOrigin(t *testing.T) {
 			if w.Code != test.status {
 				t.Fatalf("status %d, want %d: %s", w.Code, test.status, w.Body.String())
 			}
-			if w.Header().Get("Cache-Control") != "no-store" {
-				t.Fatal("missing no-store")
+			// no-transform keeps intermediaries (Render's edge) from compressing
+			// responses that carry tokens.
+			if w.Header().Get("Cache-Control") != "no-store, no-transform" {
+				t.Fatalf("Cache-Control = %q", w.Header().Get("Cache-Control"))
 			}
 		})
 	}
