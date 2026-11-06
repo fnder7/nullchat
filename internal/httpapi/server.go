@@ -308,7 +308,9 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		fail(w, chat.ErrConnectionLimit)
 		return
 	}
-	c, err := s.accept(w, r, nil)
+	// Compression next to secrets enables CRIME/BREACH-style length leaks; keep it
+	// off explicitly rather than relying on the library default.
+	c, err := s.accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return
 	}

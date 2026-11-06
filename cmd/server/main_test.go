@@ -65,3 +65,37 @@ func TestRuntimeAPIUsesConfiguredOperationTimeout(t *testing.T) {
 		t.Fatalf("timeout response = %d %s", response.Code, response.Body.String())
 	}
 }
+
+func TestServerErrorLogRedactsClientAddresses(t *testing.T) {
+	var out strings.Builder
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	server.Config.ErrorLog = newErrorLog(&out)
+	server.Start()
+	defer server.Close()
+	if response, err := http.Get(server.URL); err == nil {
+		response.Body.Close()
+	}
+	server.Close() // flush the panic log line before reading it
+	logged := out.String()
+	if !strings.Contains(logged, "panic serving <addr>") {
+		t.Fatalf("panic was not logged with a redacted address: %q", logged)
+	}
+	if strings.Contains(logged, "127.0.0.1") {
+		t.Fatalf("client address leaked into the error log: %q", logged)
+	}
+}
+
+func TestRedactAddresses(t *testing.T) {
+	for in, want := range map[string]string{
+		"http: panic serving 203.0.113.7:51234: boom":  "http: panic serving <addr>: boom",
+		"from [2001:db8::1]:443 and [fe80::1%eth0]:80": "from <addr> and <addr>",
+		"plain 10.0.0.1 and version 1.27.2":            "plain <addr> and version 1.27.2",
+		"keeps [conn:5] and [server:shutdown] tokens":  "keeps [conn:5] and [server:shutdown] tokens",
+	} {
+		if got := redactAddresses(in); got != want {
+			t.Errorf("redactAddresses(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

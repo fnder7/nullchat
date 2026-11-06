@@ -113,3 +113,20 @@ test('checkCounters находит повторы и удалённые сооб
     { missing: false, replay: false },
   ]);
 });
+
+test('wipe и withWiped обнуляют буферы, даже при исключении', async () => {
+  const a = Uint8Array.of(1, 2, 3), b = new Uint8Array([9, 9]);
+  e2ee.wipe(a, b, null, undefined);
+  assert.deepEqual([...a, ...b], [0, 0, 0, 0, 0]);
+  const c = Uint8Array.of(7, 7);
+  assert.equal(await e2ee.withWiped([c], async () => 'ok'), 'ok');
+  assert.deepEqual([...c], [0, 0]);
+  const d = Uint8Array.of(5);
+  await assert.rejects(e2ee.withWiped([d], async () => { throw new Error('boom'); }), /boom/);
+  assert.deepEqual([...d], [0]);
+});
+
+test('roomSalt не обнуляется: он нужен после reload', async () => {
+  const secrets = await e2ee.roomSecrets(e2ee.randomSecret());
+  assert.ok(secrets.roomSalt.some((x) => x !== 0));
+});

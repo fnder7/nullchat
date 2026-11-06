@@ -739,3 +739,41 @@ func TestWebSocketRejectsForeignOrigin(t *testing.T) {
 		t.Fatal("expected origin rejection")
 	}
 }
+
+// Compression of attacker-influenced data next to secrets enables CRIME/BREACH
+// style length leaks; the server must refuse permessage-deflate.
+func TestWebSocketRefusesCompression(t *testing.T) {
+	api := New(memory.New())
+	var options *websocket.AcceptOptions
+	accept := api.accept
+	api.accept = func(w http.ResponseWriter, r *http.Request, o *websocket.AcceptOptions) (*websocket.Conn, error) {
+		options = o
+		return accept(w, r, o)
+	}
+	server := httptest.NewServer(api.Handler(web.Handler()))
+	defer server.Close()
+	defer api.Shutdown()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/ws", &websocket.DialOptions{CompressionMode: websocket.CompressionContextTakeover})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	if ext := response.Header.Get("Sec-WebSocket-Extensions"); ext != "" {
+		t.Fatalf("server negotiated an extension: %q", ext)
+	}
+	if options == nil || options.CompressionMode != websocket.CompressionDisabled {
+		t.Fatal("compression is not disabled explicitly")
+	}
+	h := api.Handler(web.Handler())
+	for _, path := range []string{"/", "/app.js"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Accept-Encoding", "gzip, br")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if enc := w.Header().Get("Content-Encoding"); enc != "" {
+			t.Fatalf("%s is served with Content-Encoding %q", path, enc)
+		}
+	}
+}

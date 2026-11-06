@@ -64,7 +64,7 @@ func run() error {
 	service := postgres.New(pool, cfg.IdempotencyKey)
 	defer service.Close() // Infrastructure only; never end rooms on shutdown.
 	api := newAPI(service, cfg.OperationTimeout)
-	server := &http.Server{Addr: cfg.Addr, Handler: api.Handler(web.Handler()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: cfg.Addr, Handler: api.Handler(web.Handler()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: serverErrorLog()}
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 	expire := func() {

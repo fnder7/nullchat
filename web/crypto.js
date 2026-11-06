@@ -48,6 +48,19 @@ export function unpad(bytes) {
   return bytes.subarray(0, i);
 }
 
+// Best-effort hygiene: overwrite raw key bytes and plaintext this module owns as
+// soon as WebCrypto has copied them (it copies inputs at call time). JS strings,
+// engine-internal copies and the garbage collector are out of reach, so this
+// narrows the window rather than guaranteeing erasure.
+export function wipe(...buffers) {
+  for (const b of buffers) if (b instanceof Uint8Array) b.fill(0);
+}
+
+export async function withWiped(buffers, fn) {
+  try { return await fn(); }
+  finally { wipe(...buffers); }
+}
+
 async function hkdf(ikm, info, salt = label('salt')) {
   const key = await subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
   return new Uint8Array(await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, 256));
@@ -59,24 +72,32 @@ const hmacKey = (bits, usages) => subtle.importKey('raw', bits, { name: 'HMAC', 
 // Returns '' without a password so the stored session carries no password material.
 export async function passwordKey(secret, password) {
   if (!password) return '';
-  const key = await subtle.importKey('raw', enc.encode(password.normalize('NFC')), 'PBKDF2', false, ['deriveBits']);
-  const salt = concat(label('password'), fromB64(secret));
-  return toB64(await subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERATIONS }, key, 256));
+  const pw = enc.encode(password.normalize('NFC'));
+  const secretBytes = fromB64(secret);
+  const salt = concat(label('password'), secretBytes);
+  wipe(secretBytes);
+  const key = await withWiped([pw], () => subtle.importKey('raw', pw, 'PBKDF2', false, ['deriveBits']));
+  const bits = new Uint8Array(await withWiped([salt], () => subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERATIONS }, key, 256)));
+  return withWiped([bits], async () => toB64(bits));
 }
 
 export async function roomSecrets(secret, pwKey = '') {
   const s = fromB64(secret);
-  if (s.length !== 32) throw new Error('invalid room secret');
+  if (s.length !== 32) { wipe(s); throw new Error('invalid room secret'); }
   const pw = pwKey ? fromB64(pwKey) : new Uint8Array();
   const ikm = concat(s, Uint8Array.of(pw.length ? 1 : 0), pw);
-  const [title, mac, join, roomSalt] = await Promise.all(['title', 'handshake', 'join', 'room-salt'].map((p) => hkdf(ikm, label(p))));
-  const joinKey = await hmacKey(join, ['sign']);
-  return {
-    titleKey: await aesKey(title),
-    macKey: await hmacKey(mac, ['sign', 'verify']),
-    roomSalt,
-    verifier: toB64(await subtle.sign('HMAC', joinKey, label('join'))),
-  };
+  wipe(s, pw);
+  const [title, mac, join, roomSalt] = await withWiped([ikm], () => Promise.all(['title', 'handshake', 'join', 'room-salt'].map((p) => hkdf(ikm, label(p)))));
+  // roomSalt is kept: it is stored with the keys so messageKey can run after reload.
+  return withWiped([title, mac, join], async () => {
+    const joinKey = await hmacKey(join, ['sign']);
+    return {
+      titleKey: await aesKey(title),
+      macKey: await hmacKey(mac, ['sign', 'verify']),
+      roomSalt,
+      verifier: toB64(await subtle.sign('HMAC', joinKey, label('join'))),
+    };
+  });
 }
 
 // The private key is non-extractable: script injected into the page can use it while
@@ -104,7 +125,8 @@ export async function messageKey(secrets, privateKey, creatorPublic, guestPublic
   const peer = await subtle.importKey('raw', fromB64(selfRole === 'creator' ? guestPublic : creatorPublic), EC, false, []);
   const shared = new Uint8Array(await subtle.deriveBits({ name: 'ECDH', public: peer }, privateKey, 256));
   const info = concat(label('messages'), fromB64(creatorPublic), fromB64(guestPublic));
-  return aesKey(await hkdf(shared, info, secrets.roomSalt));
+  const bits = await withWiped([shared], () => hkdf(shared, info, secrets.roomSalt));
+  return withWiped([bits], () => aesKey(bits));
 }
 
 export async function safetyCode(creatorPublic, guestPublic) {
@@ -124,12 +146,14 @@ async function open(key, blob, aad) {
 
 export async function encryptTitle(secrets, title) {
   const bytes = enc.encode(title);
-  if (bytes.length >= PAD_BLOCK) throw new RangeError('title too long');
-  return seal(secrets.titleKey, pad(bytes), label('title'));
+  if (bytes.length >= PAD_BLOCK) { wipe(bytes); throw new RangeError('title too long'); }
+  const padded = pad(bytes);
+  return withWiped([bytes, padded], () => seal(secrets.titleKey, padded, label('title')));
 }
 
 export async function decryptTitle(secrets, blob) {
-  return dec.decode(unpad(await open(secrets.titleKey, blob, label('title'))));
+  const plain = await open(secrets.titleKey, blob, label('title'));
+  return withWiped([plain], async () => dec.decode(unpad(plain)));
 }
 
 const messageAad = ({ roomId, senderId, clientId }) => enc.encode(JSON.stringify([`${VERSION} message`, roomId, senderId, clientId]));
@@ -142,20 +166,25 @@ const HEADER_BYTES = 9; // version, counter, prev
 // for sends that simply failed.
 export async function encryptMessage(key, { roomId, senderId, clientId, counter, prev = 0, text }) {
   const body = enc.encode(text);
-  if (body.length > MAX_TEXT_BYTES) throw new RangeError('text too long');
+  if (body.length > MAX_TEXT_BYTES) { wipe(body); throw new RangeError('text too long'); }
   const header = new Uint8Array(HEADER_BYTES);
   const view = new DataView(header.buffer);
   header[0] = 1;
   view.setUint32(1, counter);
   view.setUint32(5, prev);
-  return seal(key, pad(concat(header, body)), messageAad({ roomId, senderId, clientId }));
+  const joined = concat(header, body);
+  const padded = pad(joined);
+  return withWiped([body, joined, padded], () => seal(key, padded, messageAad({ roomId, senderId, clientId })));
 }
 
 export async function decryptMessage(key, { roomId, senderId, clientId, ciphertext }) {
-  const plain = unpad(await open(key, ciphertext, messageAad({ roomId, senderId, clientId })));
-  if (plain.length < HEADER_BYTES || plain[0] !== 1) throw new Error('unsupported message version');
-  const view = new DataView(plain.buffer, plain.byteOffset);
-  return { counter: view.getUint32(1), prev: view.getUint32(5), text: dec.decode(plain.subarray(HEADER_BYTES)) };
+  const raw = await open(key, ciphertext, messageAad({ roomId, senderId, clientId }));
+  return withWiped([raw], async () => {
+    const plain = unpad(raw);
+    if (plain.length < HEADER_BYTES || plain[0] !== 1) throw new Error('unsupported message version');
+    const view = new DataView(plain.buffer, plain.byteOffset);
+    return { counter: view.getUint32(1), prev: view.getUint32(5), text: dec.decode(plain.subarray(HEADER_BYTES)) };
+  });
 }
 
 // Messages must be in sequence order. A counter that does not increase is a replay

@@ -237,6 +237,7 @@ function finish(label) {
   state.socket?.close(1000);
   sessionStorage.removeItem(`nullchat:${state.room.id}`);
   keystore.deleteKeys(keyId()).catch(() => {});
+  e2ee.wipe(state.secrets?.roomSalt);
   state.secrets = null; state.privateKey = null; state.messageKey = null;
   state.invite = '';
   state.pending.clear();
