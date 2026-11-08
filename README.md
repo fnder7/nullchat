@@ -118,6 +118,16 @@ The root contains the Blueprint [`render.yaml`](render.yaml): a web service from
 2. Render creates the `nullchat-db` database, injects `DATABASE_URL`, generates `IDEMPOTENCY_ENCRYPTION_KEY` itself and sets `MIGRATE_ON_START=true`: the free plan has no pre-deploy step, so the server applies the embedded migrations before starting.
 3. After the deploy, check `https://<service>.onrender.com/readyz`. Render provides HTTPS; WebCrypto does not work without HTTPS.
 
+### Automatic deploy from `main`
+
+Every push to `main` deploys to the stand (https://nullchat-xdgz.onrender.com) once the `go-checks` job passes: the `deploy-staging` job in `.gitlab-ci.yml` calls the service's Render Deploy Hook with `ref=$CI_COMMIT_SHA`, so exactly the checked commit is deployed. One-time setup:
+
+1. Render → service → **Settings**: set **Branch** to `main` and **Auto-Deploy** to **Off** (otherwise Render deploys on its own, before the checks).
+2. Copy the **Deploy Hook** URL there, `https://api.render.com/deploy/srv-…?key=<KEY>`.
+3. GitLab → **Settings → CI/CD → Variables**: add `RENDER_DEPLOY_HOOK_KEY` = `<KEY>`, flags **Protected** and **Masked**. `main` must be a protected branch.
+
+The job only starts the deploy; its progress and result are in the Render dashboard. To roll back, redeploy an earlier deploy in Render or revert the commit in `main`.
+
 Free plan limits: the service sleeps after about 15 minutes without traffic (the WebSocket drops, the client reconnects, rooms and history persist in the database), the first request after sleep takes about a minute, and the free database is deleted after 30 days. There must be exactly one instance: the event hub lives in process memory.
 
 If the logs show `room expiry failed; will retry`, the `cause` field hints at the reason: `sqlstate 42P01` means the migrations were not applied (enable `MIGRATE_ON_START` or run `/migrate`), `connect` or `connection` means the database is unreachable.

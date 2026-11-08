@@ -5,6 +5,7 @@ workflow:
 
 stages:
   - test
+  - deploy
 
 go-checks:
   stage: test
@@ -34,3 +35,27 @@ go-checks:
     - go build -buildvcs=false ./cmd/server ./cmd/migrate
     - go run ./cmd/webhash
     - go test -tags=integration -race ./internal/storage/postgres
+
+# Deploys every push to the default branch to the Render stand, only after
+# go-checks passes. RENDER_DEPLOY_HOOK_KEY is the `key` part of the service's
+# Deploy Hook URL; keep it as a protected, masked CI/CD variable. Render's own
+# auto-deploy is off (render.yaml), so this job is the only deploy trigger.
+deploy-staging:
+  stage: deploy
+  image:
+    name: curlimages/curl:8.11.1
+    entrypoint: [""]
+  needs: [go-checks]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  # One deploy at a time; a newer push waits instead of racing an older one.
+  resource_group: staging
+  environment:
+    name: staging
+    url: https://nullchat-xdgz.onrender.com
+  variables:
+    RENDER_SERVICE_ID: srv-dase7k7lk1mc73bjd080
+  script:
+    - '[ -n "$RENDER_DEPLOY_HOOK_KEY" ] || { echo "RENDER_DEPLOY_HOOK_KEY is not set" >&2; exit 1; }'
+    # ref pins the deploy to the commit that passed the checks, not the branch tip.
+    - curl --fail-with-body -sS -X POST "https://api.render.com/deploy/${RENDER_SERVICE_ID}?key=${RENDER_DEPLOY_HOOK_KEY}&ref=${CI_COMMIT_SHA}"
