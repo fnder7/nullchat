@@ -8,6 +8,10 @@ services:
     plan: free
     region: frankfurt
     dockerfilePath: ./Dockerfile
+    # The stand follows main, but GitLab CI triggers deploys through the Deploy
+    # Hook after the checks pass (deploy-staging in .gitlab-ci.yml).
+    branch: main
+    autoDeployTrigger: "off"
     # /readyz pings PostgreSQL; /healthz alone would pass without a database.
     healthCheckPath: /readyz
     # The realtime hub lives in process memory: never run more than one
