@@ -1,6 +1,49 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nullchat
+      POSTGRES_PASSWORD: nullchat
+      POSTGRES_DB: nullchat
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U nullchat -d nullchat"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  migrate:
+    build: .
+    image: ${COMPOSE_PROJECT_NAME:-nullchat}-app:local
+    entrypoint: ["/migrate"]
+    environment:
+      DATABASE_URL: postgres://nullchat:nullchat@postgres:5432/nullchat?sslmode=disable
+      IDEMPOTENCY_ENCRYPTION_KEY: ${IDEMPOTENCY_ENCRYPTION_KEY:?Set IDEMPOTENCY_ENCRYPTION_KEY to 64 hex characters}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   nullchat:
     build: .
+    image: ${COMPOSE_PROJECT_NAME:-nullchat}-app:local
+    environment:
+      DATABASE_URL: postgres://nullchat:nullchat@postgres:5432/nullchat?sslmode=disable
+      IDEMPOTENCY_ENCRYPTION_KEY: ${IDEMPOTENCY_ENCRYPTION_KEY:?Set IDEMPOTENCY_ENCRYPTION_KEY to 64 hex characters}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8080:8080"
     init: true
@@ -10,3 +53,19 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
+
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      target: build
+    environment:
+      TEST_DATABASE_URL: postgres://nullchat:nullchat@postgres:5432/nullchat_test?sslmode=disable
+      CGO_ENABLED: "1"
+    command: ["go", "test", "-tags=integration", "-race", "./internal/storage/postgres"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -1,4 +1,4 @@
-package chat
+package memory
 
 import (
 	"context"
@@ -8,13 +8,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"nullchat/internal/chat"
+	"nullchat/internal/chat/chattest"
 )
 
 var testContext = context.Background()
 
-func create(t *testing.T, s *Service) Credentials {
+func create(t *testing.T, s *Service) chat.Credentials {
 	t.Helper()
-	c, err := s.Create(testContext, "Test room", 30)
+	c, err := s.Create(testContext, chattest.CreateInput(30))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +33,9 @@ func TestInviteConsumedAtomically(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := s.Join(testContext, c.InviteToken); err == nil {
+			if _, err := s.Join(testContext, chattest.JoinInput(c.InviteToken)); err == nil {
 				successes.Add(1)
-			} else if !errors.Is(err, ErrUnavailable) {
+			} else if !errors.Is(err, chat.ErrUnavailable) {
 				t.Errorf("unexpected error: %v", err)
 			}
 		}()
@@ -46,7 +49,7 @@ func TestInviteConsumedAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if got := len((<-events).Payload.(SnapshotEvent).Room.Participants); got != 2 {
+	if got := len((<-events).Payload.(chat.SnapshotEvent).Room.Participants); got != 2 {
 		t.Fatalf("got %d participants", got)
 	}
 }
@@ -54,7 +57,7 @@ func TestInviteConsumedAtomically(t *testing.T) {
 func TestParticipantNamesAreGeneratedAndUniquePerRoom(t *testing.T) {
 	s := New()
 	creator := create(t, s)
-	guest, err := s.Join(testContext, creator.InviteToken)
+	guest, err := s.Join(testContext, chattest.JoinInput(creator.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +77,14 @@ func TestParticipantNamesAreGeneratedAndUniquePerRoom(t *testing.T) {
 func TestConcurrentDuplicateMessagesAreStoredOnce(t *testing.T) {
 	s := New()
 	c := create(t, s)
+	body := chattest.Ciphertext(1)
 	var wg sync.WaitGroup
 	ids := make(chan string, 32)
 	for range 32 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			m, err := s.Send(testContext, c.SessionToken, "client-1", "hello")
+			m, err := s.Send(testContext, c.SessionToken, "client-1", body)
 			if err != nil {
 				t.Errorf("send: %v", err)
 				return
@@ -104,10 +108,10 @@ func TestConcurrentDuplicateMessagesAreStoredOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if got := len((<-events).Payload.(SnapshotEvent).Room.Messages); got != 1 {
+	if got := len((<-events).Payload.(chat.SnapshotEvent).Room.Messages); got != 1 {
 		t.Fatalf("got %d messages", got)
 	}
-	if _, err := s.Send(testContext, c.SessionToken, "client-1", "changed"); !errors.Is(err, ErrConflict) {
+	if _, err := s.Send(testContext, c.SessionToken, "client-1", chattest.Ciphertext(1)); !errors.Is(err, chat.ErrConflict) {
 		t.Fatalf("conflicting duplicate: %v", err)
 	}
 }
@@ -117,7 +121,7 @@ func TestExpirationRevokesAllAccessAtDeadline(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	c := create(t, s)
-	guest, err := s.Join(testContext, c.InviteToken)
+	guest, err := s.Join(testContext, chattest.JoinInput(c.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,12 +131,12 @@ func TestExpirationRevokesAllAccessAtDeadline(t *testing.T) {
 	}
 	defer cancel()
 	<-events
-	if _, err := s.Send(testContext, c.SessionToken, "1", "private"); err != nil {
+	if _, err := s.Send(testContext, c.SessionToken, "1", chattest.Ciphertext(1)); err != nil {
 		t.Fatal(err)
 	}
 	now = c.Room.ExpiresAt
 	// No background sweep is needed to enforce the deadline.
-	if _, err := s.Send(testContext, guest.SessionToken, "2", "late"); !errors.Is(err, ErrSession) {
+	if _, err := s.Send(testContext, guest.SessionToken, "2", chattest.Ciphertext(1)); !errors.Is(err, chat.ErrSession) {
 		t.Fatalf("late send: %v", err)
 	}
 	if event := <-events; event.Type != "room_expired" {
@@ -141,7 +145,7 @@ func TestExpirationRevokesAllAccessAtDeadline(t *testing.T) {
 	if _, ok := <-events; ok {
 		t.Fatal("subscription still open")
 	}
-	if _, _, err := s.Subscribe(testContext, c.SessionToken); !errors.Is(err, ErrSession) {
+	if _, _, err := s.Subscribe(testContext, c.SessionToken); !errors.Is(err, chat.ErrSession) {
 		t.Fatal("expired session accepted")
 	}
 	if len(s.rooms)+len(s.sessions)+len(s.invites) != 0 {
@@ -158,7 +162,7 @@ func TestSnapshotAndLiveStreamHaveNoGap(t *testing.T) {
 		go func() {
 			defer close(sent)
 			<-start
-			_, err := s.Send(testContext, c.SessionToken, "1", "racing subscribe")
+			_, err := s.Send(testContext, c.SessionToken, "1", chattest.Ciphertext(1))
 			if err != nil {
 				t.Errorf("send: %v", err)
 			}
@@ -169,7 +173,7 @@ func TestSnapshotAndLiveStreamHaveNoGap(t *testing.T) {
 			t.Fatal(err)
 		}
 		<-sent
-		snapshot := (<-events).Payload.(SnapshotEvent)
+		snapshot := (<-events).Payload.(chat.SnapshotEvent)
 		count := len(snapshot.Room.Messages)
 		select {
 		case e := <-events:
@@ -203,7 +207,7 @@ func TestSlowSubscriberDoesNotBlockOthers(t *testing.T) {
 	<-fast
 	for i := range 80 {
 		now = now.Add(time.Second)
-		if _, err := s.Send(testContext, c.SessionToken, fmt.Sprint(i), "message"); err != nil {
+		if _, err := s.Send(testContext, c.SessionToken, fmt.Sprint(i), chattest.Ciphertext(1)); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -233,7 +237,7 @@ func TestSlowSubscriberDoesNotBlockOthers(t *testing.T) {
 func TestEndRevokesBothSessionsAndInvite(t *testing.T) {
 	s := New()
 	c := create(t, s)
-	guest, err := s.Join(testContext, c.InviteToken)
+	guest, err := s.Join(testContext, chattest.JoinInput(c.InviteToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,11 +245,11 @@ func TestEndRevokesBothSessionsAndInvite(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, token := range []string{c.SessionToken, guest.SessionToken} {
-		if _, _, err := s.Subscribe(testContext, token); !errors.Is(err, ErrSession) {
+		if _, _, err := s.Subscribe(testContext, token); !errors.Is(err, chat.ErrSession) {
 			t.Fatal("ended session accepted")
 		}
 	}
-	if _, err := s.Join(testContext, c.InviteToken); !errors.Is(err, ErrUnavailable) {
+	if _, err := s.Join(testContext, chattest.JoinInput(c.InviteToken)); !errors.Is(err, chat.ErrUnavailable) {
 		t.Fatal("ended invitation accepted")
 	}
 }
@@ -253,24 +257,93 @@ func TestEndRevokesBothSessionsAndInvite(t *testing.T) {
 func TestValidationAndCapacity(t *testing.T) {
 	s := New()
 	for _, ttl := range []int{-1, 0, 61} {
-		if _, err := s.Create(testContext, "room", ttl); !errors.Is(err, ErrInput) {
+		if _, err := s.Create(testContext, chattest.CreateInput(ttl)); !errors.Is(err, chat.ErrInput) {
 			t.Fatalf("accepted TTL %d", ttl)
 		}
 	}
 	c := create(t, s)
-	for _, body := range []string{"", "  ", string([]byte{0xff})} {
-		if _, err := s.Send(testContext, c.SessionToken, "1", body); !errors.Is(err, ErrInput) {
-			t.Fatal("accepted invalid text")
+	for _, body := range []string{"", "hello", chattest.Ciphertext(0), chattest.Ciphertext(17), chattest.Blob(chat.NonceBytes + chat.PadBlock + chat.TagBytes + 3)} {
+		if _, err := s.Send(testContext, c.SessionToken, "1", body); !errors.Is(err, chat.ErrInput) {
+			t.Fatalf("accepted invalid ciphertext %q", body)
 		}
 	}
-	for range MaxRooms - 1 {
+	for range chat.MaxRooms - 1 {
 		create(t, s)
 	}
-	if _, err := s.Create(testContext, "full", 30); !errors.Is(err, ErrCapacity) {
+	if _, err := s.Create(testContext, chattest.CreateInput(30)); !errors.Is(err, chat.ErrCapacity) {
 		t.Fatal("unbounded rooms")
 	}
 	s.Close()
-	if _, err := s.Create(testContext, "closed", 30); !errors.Is(err, ErrCapacity) {
+	if _, err := s.Create(testContext, chattest.CreateInput(30)); !errors.Is(err, chat.ErrCapacity) {
 		t.Fatal("create after shutdown")
+	}
+}
+
+func TestWrongJoinProofKeepsInviteUntilLimit(t *testing.T) {
+	s := New()
+	c := create(t, s)
+	wrong := chattest.JoinInput(c.InviteToken)
+	wrong.JoinProof = chattest.Blob(chat.MACBytes)
+	for range chat.MaxJoinAttempts - 1 {
+		if _, err := s.Join(testContext, wrong); !errors.Is(err, chat.ErrJoinProof) {
+			t.Fatalf("wrong proof: %v", err)
+		}
+	}
+	guest, err := s.Join(testContext, chattest.JoinInput(c.InviteToken))
+	if err != nil {
+		t.Fatalf("correct proof after failures: %v", err)
+	}
+	if c.Self.Role != chat.RoleCreator || guest.Self.Role != chat.RoleGuest || guest.Room.Participants[0].Role != chat.RoleCreator {
+		t.Fatal("roles not assigned")
+	}
+	if guest.Room.Participants[0].KeyShare != c.Self.KeyShare {
+		t.Fatal("creator key share not published to the guest")
+	}
+}
+
+func TestJoinProofFailuresRevokeInvite(t *testing.T) {
+	s := New()
+	c := create(t, s)
+	events, cancel, err := s.Subscribe(testContext, c.SessionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	<-events
+	wrong := chattest.JoinInput(c.InviteToken)
+	wrong.JoinProof = chattest.Blob(chat.MACBytes)
+	for range chat.MaxJoinAttempts {
+		if _, err := s.Join(testContext, wrong); !errors.Is(err, chat.ErrJoinProof) {
+			t.Fatalf("wrong proof: %v", err)
+		}
+	}
+	if e := <-events; e.Type != "invite_revoked" {
+		t.Fatalf("event %s, want invite_revoked", e.Type)
+	}
+	if _, err := s.Join(testContext, chattest.JoinInput(c.InviteToken)); !errors.Is(err, chat.ErrUnavailable) {
+		t.Fatalf("revoked invite: %v", err)
+	}
+}
+
+func TestInvalidJoinInputDoesNotConsumeInvite(t *testing.T) {
+	s := New()
+	c := create(t, s)
+	bad := chattest.JoinInput(c.InviteToken)
+	bad.KeyShare.MAC = ""
+	if _, err := s.Join(testContext, bad); !errors.Is(err, chat.ErrInput) {
+		t.Fatalf("invalid guest share: %v", err)
+	}
+	if _, err := s.Join(testContext, chattest.JoinInput(c.InviteToken)); err != nil {
+		t.Fatalf("invalid input consumed the invite: %v", err)
+	}
+}
+
+func TestCiphertextStoredVerbatim(t *testing.T) {
+	s := New()
+	c := create(t, s)
+	body := chattest.Ciphertext(3)
+	m, err := s.Send(testContext, c.SessionToken, "id-1", body)
+	if err != nil || m.Ciphertext != body {
+		t.Fatalf("ciphertext altered: %v", err)
 	}
 }

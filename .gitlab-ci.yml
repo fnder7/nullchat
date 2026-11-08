@@ -1,0 +1,36 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null'
+
+stages:
+  - test
+
+go-checks:
+  stage: test
+  image: golang:1.26-alpine
+  services:
+    - name: postgres:17-alpine
+      alias: postgres
+      variables:
+        POSTGRES_USER: nullchat
+        POSTGRES_PASSWORD: nullchat
+        POSTGRES_DB: nullchat
+  variables:
+    CGO_ENABLED: "1"
+    DATABASE_URL: postgres://nullchat:nullchat@postgres:5432/nullchat?sslmode=disable
+    TEST_DATABASE_URL: postgres://nullchat:nullchat@postgres:5432/nullchat_test?sslmode=disable
+    IDEMPOTENCY_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  before_script:
+    - apk add --no-cache build-base nodejs postgresql-client
+    - go mod download
+    - until pg_isready -h postgres -U nullchat -d nullchat; do sleep 1; done
+    - PGPASSWORD=nullchat createdb -h postgres -U nullchat nullchat_test
+  script:
+    - go test -race ./...
+    - go vet ./...
+    - node --check web/app.js
+    - node --test web/crypto.test.mjs
+    - go build -buildvcs=false ./cmd/server ./cmd/migrate
+    - go run ./cmd/webhash
+    - go test -tags=integration -race ./internal/storage/postgres
