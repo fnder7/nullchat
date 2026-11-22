@@ -708,7 +708,7 @@ func TestFrontendMobileShellLayout(t *testing.T) {
 	if !strings.Contains(floor, "font-size:12px") {
 		t.Error("text floor is not 12px")
 	}
-	if !regexp.MustCompile(`(?s)\n\.chat-head\s*\{\s*display:none`).MatchString(css[:strings.Index(css, "@media(max-width:700px)")+0] + css) {
+	if !regexp.MustCompile(`(?s)\n\.chat-head\s*\{\s*display:none`).MatchString(css) {
 		t.Error(".chat-head is not hidden above 700px")
 	}
 	if strings.Count(funcBody(t, js, "function finish("), "$('timer-card').classList.remove('ending')") > 1 {
