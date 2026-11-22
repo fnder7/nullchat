@@ -998,3 +998,36 @@ func TestFrontendNoArrowGlyphs(t *testing.T) {
 		}
 	}
 }
+
+func TestFrontendSentCheckAndSameTabLinks(t *testing.T) {
+	appBytes, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := string(appBytes)
+	for _, want := range []string{`from './nav.js'`, `addEventListener('hashchange'`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+	i := strings.Index(app, `addEventListener('hashchange'`)
+	if i < 0 {
+		t.FailNow()
+	}
+	listener := app[i:]
+	listener = listener[:strings.Index(listener, "\n});")]
+	for _, want := range []string{`event.oldURL`, `event.newURL`, `needsReload(`, `location.reload()`} {
+		if !strings.Contains(listener, want) {
+			t.Errorf("hashchange listener lacks %s", want)
+		}
+	}
+	body := funcBody(t, app, "function buildMessage")
+	for _, want := range []string{`self && status === 'accepted'`, `createElementNS('http://www.w3.org/2000/svg'`, `'aria-label', 'Sent'`, "article.dataset.key = `${message.sender_id}:${message.client_message_id}`;"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("buildMessage lacks %s", want)
+		}
+	}
+	if strings.Contains(body, "dataset.group += `|${time.textContent}`") == false {
+		t.Error("the sent check must not change the grouping key")
+	}
+}

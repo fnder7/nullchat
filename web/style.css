@@ -817,6 +817,20 @@ footer>span:first-child {
   justify-content:space-between;
 }
 
+.message-meta > span:first-child { margin-right:auto; }
+
+.message-meta .sent-check {
+  margin-left:-9px;
+  width:12px;
+  height:12px;
+  flex:none;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.5;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
 .bubble {
   padding:12px 15px;
   background:#262e26;
