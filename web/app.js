@@ -161,10 +161,12 @@ function buildMessage(message, pending = false) {
   const article = document.createElement('article'); article.className = `message${self ? ' self' : ''} ${status}${plain?.error ? ' undecryptable' : ''}`;
   // The same key while a message goes pending -> accepted, so its node is patched, not re-announced.
   article.dataset.key = `${message.sender_id}:${message.client_message_id}`;
+  article.dataset.group = `${message.sender_id}|${status}`;
   const meta = document.createElement('div'); meta.className = 'message-meta';
   const name = document.createElement('span'); name.textContent = self ? 'You' : (state.room.participants.find((p) => p.id === message.sender_id)?.name || 'Contact');
   const time = document.createElement('span'); time.textContent = status === 'pending' ? 'Sending…' : status === 'failed' ? 'Not sent' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   meta.append(name, time);
+  article.dataset.group += `|${time.textContent}`;
   const bubble = document.createElement('div'); bubble.className = 'bubble';
   if (plain?.error) bubble.textContent = '⚠ This message could not be decrypted';
   else fillText(bubble, plain?.text ?? '…');
@@ -232,8 +234,14 @@ function renderMessages() {
   const current = new Map([...box.children].map((node) => [node.dataset.key, node]));
   const keep = new Set();
   let index = 0;
+  let prevGroup = '';
   for (const fresh of wanted) {
     if (!fresh || keep.has(fresh.dataset.key)) continue;
+    // Same sender, same status, same minute as the message above: the name and time are
+    // not repeated on screen (they stay for screen readers).
+    const group = fresh.dataset.group || '';
+    fresh.classList.toggle('continued', group !== '' && group === prevGroup);
+    prevGroup = group;
     let node = current.get(fresh.dataset.key);
     if (node) patchNode(node, fresh); else node = fresh;
     keep.add(node.dataset.key);
@@ -328,7 +336,7 @@ function connection(connected, label) {
   const canSend = connected && !state.ended && Boolean(state.messageKey) && !state.keyError;
   $('message').disabled = !canSend;
   $('send-button').disabled = !canSend || !$('message').value.trim();
-  $('message').placeholder = state.messageKey ? 'What\'s on your mind?' : 'Waiting for your contact: the shared key appears once they join';
+  $('message').placeholder = state.messageKey ? 'What\'s on your mind?' : 'Waiting for your contact…';
   $('reconnect-button').hidden = connected || state.ended || state.retry < MAX_RECONNECT_ATTEMPTS;
 }
 function finish(label) {
@@ -657,7 +665,7 @@ if (!globalThis.crypto?.subtle) {
 } else {
   keystore.sweepExpired().catch(() => {});
   if (params.has('invite')) {
-    $('create-form').hidden = true; $('invite-panel').hidden = false; $('card-title').textContent = 'You are invited';
+    $('create-form').hidden = true; $('invite-panel').hidden = false; $('card-title').textContent = 'You are invited'; $('card-eyebrow').textContent = 'INVITATION';
     $('join-password-row').hidden = params.get('pw') !== '1';
     document.querySelector('.create-card .muted').textContent = 'One conversation. One invite, just for you.';
   } else if (params.has('room')) {

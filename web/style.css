@@ -113,15 +113,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   flex-shrink:0;
 }
 
-.version {
-  font:11px monospace;
-  letter-spacing:1px;
-  border:1px solid var(--line);
-  padding:8px 11px;
-  border-radius:4px;
-  color:var(--muted);
-}
-
 .home {
   display:grid;
   grid-template-columns:1.3fr 1fr;
@@ -629,6 +620,22 @@ footer>span:first-child {
   align-self:flex-end;
 }
 
+/* A follow-up from the same sender in the same minute: no repeated name and time on
+   screen, kept for screen readers, and pulled closer to the message above. */
+.message.continued {
+  margin-top:-11px;
+}
+
+.message.continued .message-meta {
+  position:absolute;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+  clip:rect(0 0 0 0);
+  white-space:nowrap;
+  margin:0;
+}
+
 .message-meta {
   font-size:10px;
   color:var(--muted);
@@ -875,16 +882,33 @@ footer>span:first-child {
   footer a {
     margin-left:auto;
   }
+  /* The sidebar dissolves into the page grid so the conversation can sit right under
+     the room header; reference panels (encryption, notifications) follow it. The invite
+     stays above the conversation: while it is shown, sending it is the next step. */
   .chat-layout {
-    display:flex;
-    flex-direction:column;
-    padding-top:20px;
-    gap:20px;
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    gap:0 20px;
+    align-items:start;
+    padding-top:30px;
   }
   .room-sidebar {
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:0 20px;
+    display:contents;
+  }
+  .conversation {
+    grid-column:1/-1;
+    order:1;
+    margin:20px 0;
+  }
+  .safety-panel,
+  .notify-panel,
+  .sidebar-note,
+  .danger-link {
+    grid-column:1/-1;
+    order:2;
+  }
+  .safety-panel {
+    margin-top:0;
   }
   .room-sidebar>.eyebrow {
     grid-column:1;
@@ -970,9 +994,6 @@ footer>span:first-child {
   }
   .bubble {
     font-size:13px;
-  }
-  .version {
-    font-size:9px;
   }
   .eyebrow {
     font-size:9px;

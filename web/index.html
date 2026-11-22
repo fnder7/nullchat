@@ -15,7 +15,6 @@
     <header class="header">
       <a class="brand" href="/" aria-label="n_nullchat. — home"><span class="brand-mark">n<span>_</span></span>nullchat<span class="brand-dot">.</span></a>
       <span class="header-note"><span class="dot"></span> fewer traces, more conversation</span>
-      <span class="version">DEMO / 01</span>
     </header>
 
     <main id="home" class="home">
@@ -28,7 +27,7 @@
       </section>
 
       <section class="create-card" aria-labelledby="card-title">
-        <div class="card-top"><span class="eyebrow">NEW CONVERSATION</span><span class="card-symbol">↗</span></div>
+        <div class="card-top"><span id="card-eyebrow" class="eyebrow">NEW CONVERSATION</span><span class="card-symbol">↗</span></div>
         <h2 id="card-title">A place for two</h2>
         <p class="muted">Invite the person you want to talk to.</p>
         <form id="create-form">
@@ -47,9 +46,9 @@
       </section>
 
       <section class="principles" aria-label="About the service">
-        <article><span class="principle-num">/ 01</span><h3>No sign-up</h3><p>A pseudonym instead of a profile.<br>Just being here is enough.</p></article>
-        <article><span class="principle-num">/ 02</span><h3>Just the two of you</h3><p>A one-time invite.<br>No public rooms.</p></article>
-        <article><span class="principle-num">/ 03</span><h3>For your eyes only</h3><p>End-to-end encryption.<br>The server stores only ciphertext.</p></article>
+        <article><span class="principle-num">/ 01</span><h3>No sign-up</h3><p>A pseudonym instead of a profile. <br>Just being here is enough.</p></article>
+        <article><span class="principle-num">/ 02</span><h3>Just the two of you</h3><p>A one-time invite. <br>No public rooms.</p></article>
+        <article><span class="principle-num">/ 03</span><h3>For your eyes only</h3><p>End-to-end encryption. <br>The server stores only ciphertext.</p></article>
       </section>
     </main>
 
@@ -59,9 +58,9 @@
         <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div><p id="timer-alert" class="sr-only" role="status"></p></div>
         <div class="participants-heading"><span class="eyebrow">PARTICIPANTS</span><span id="participant-count">1 / 2</span></div>
         <ul id="participants" class="participants"></ul>
+        <section id="share-panel" class="share-panel" hidden><h3>Invite your contact</h3><p>Send this link personally. <br>It can be used once.</p><input id="invite-link" aria-label="Invite link" readonly><button id="copy-button" class="secondary" type="button">Copy link ↗</button></section>
         <section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><strong id="safety-code">waiting for your contact</strong><p id="safety-note">Messages are encrypted in the browser. The server sees only ciphertext. Compare this code with your contact by voice: it must match.</p><p id="safety-alert" class="sr-only" role="alert"></p></section>
         <section id="notify-panel" class="notify-panel" hidden><button id="notify-button" class="secondary" type="button">Turn on notifications</button><p id="notify-note"></p></section>
-        <section id="share-panel" class="share-panel" hidden><h3>Invite your contact</h3><p>Send this link personally.<br>It can be used once.</p><input id="invite-link" aria-label="Invite link" readonly><button id="copy-button" class="secondary" type="button">Copy link ↗</button></section>
         <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
         <button id="end-button" class="danger-link" type="button">End the chat for both ↗</button>
       </aside>
