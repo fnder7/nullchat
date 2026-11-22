@@ -1,3 +1,39 @@
+@font-face {
+  font-family:"Instrument Sans";
+  font-style:normal;
+  font-weight:400 700;
+  font-display:swap;
+  src:url(/fonts/instrument-sans-latin-ext.woff2) format("woff2");
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family:"Instrument Sans";
+  font-style:normal;
+  font-weight:400 700;
+  font-display:swap;
+  src:url(/fonts/instrument-sans-latin.woff2) format("woff2");
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family:"JetBrains Mono";
+  font-style:normal;
+  font-weight:100 800;
+  font-display:swap;
+  src:url(/fonts/jetbrains-mono-latin-ext.woff2) format("woff2");
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family:"JetBrains Mono";
+  font-style:normal;
+  font-weight:100 800;
+  font-display:swap;
+  src:url(/fonts/jetbrains-mono-latin.woff2) format("woff2");
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme:dark;
   --bg:#111514;
@@ -8,7 +44,8 @@
   --muted-subtle:#84907f;
   --accent:#ccf88b;
   --error:#ffafa2;
-  font-family:Inter,"Segoe UI",Arial,sans-serif;
+  font-family:"Instrument Sans",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
   font-synthesis:none;
 }
 
@@ -82,7 +119,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   width:35px;
   height:35px;
   margin-right:12px;
-  font:700 24px monospace;
+  font:700 24px var(--mono);
   border:1px solid #53624a;
   border-radius:9px;
   color:var(--accent);
@@ -122,7 +159,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 }
 
 .eyebrow {
-  font:10px monospace;
+  font:10px var(--mono);
   letter-spacing:1.7px;
   color:var(--muted);
   display:flex;
@@ -164,12 +201,12 @@ h1 {
 }
 
 .flow span {
-  font:11px monospace;
+  font:11px var(--mono);
   color:var(--accent);
 }
 
 .flow b {
-  font:11px "Segoe UI",Arial,sans-serif;
+  font:11px "Instrument Sans",system-ui,sans-serif;
   color:#b8c1b2;
   margin-left:5px;
 }
@@ -328,7 +365,7 @@ select {
 }
 
 .principle-num {
-  font:10px monospace;
+  font:10px var(--mono);
   color:var(--muted-subtle);
 }
 
@@ -495,7 +532,7 @@ footer>span:first-child {
 
 .timer-card strong {
   display:block;
-  font:36px monospace;
+  font:36px var(--mono);
   letter-spacing:-1px;
   margin:12px 0 16px;
   color:var(--accent);
@@ -523,7 +560,7 @@ footer>span:first-child {
 }
 
 .participants-heading>span:last-child {
-  font:11px monospace;
+  font:11px var(--mono);
   color:var(--muted);
 }
 
@@ -586,7 +623,7 @@ footer>span:first-child {
 .trust-code {
   display:block;
   margin:8px 0;
-  font:24px monospace;
+  font:24px var(--mono);
   letter-spacing:.08em;
   color:var(--accent);
 }
@@ -605,7 +642,7 @@ footer>span:first-child {
 }
 
 .trust-link {
-  font:12px monospace;
+  font:12px var(--mono);
   overflow-wrap:anywhere;
   user-select:all;
   color:var(--text);
@@ -707,7 +744,7 @@ footer>span:first-child {
 }
 
 .conversation-label {
-  font:9px monospace;
+  font:9px var(--mono);
   letter-spacing:1px;
 }
 
@@ -734,7 +771,7 @@ footer>span:first-child {
 .empty-symbol {
   display:block;
   color:var(--accent);
-  font:40px monospace;
+  font:40px var(--mono);
   margin-bottom:18px;
 }
 
@@ -1061,7 +1098,7 @@ footer>span:first-child {
   }
   .timer-chip {
     flex:none;
-    font:16px monospace;
+    font:16px var(--mono);
     color:var(--accent);
   }
   .timer-chip.ending {
@@ -1300,7 +1337,7 @@ footer>span:first-child {
 
 .safety-panel .safety-spec {
   margin-top:4px;
-  font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  font:12px/1.4 var(--mono);
   color:var(--muted-subtle);
 }
 

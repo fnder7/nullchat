@@ -901,3 +901,48 @@ func TestFrontendMobileComposerHintStaysOneLine(t *testing.T) {
 		t.Error("the composer hint row can still wrap on phones")
 	}
 }
+
+func TestFrontendShipsItsOwnFonts(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := string(css)
+	for _, family := range []string{"Instrument Sans", "JetBrains Mono"} {
+		block := regexp.MustCompile(`@font-face\s*\{[^}]*font-family:\s*"` + family + `"[^}]*\}`).FindString(style)
+		if block == "" {
+			t.Errorf("no @font-face for %s", family)
+			continue
+		}
+		if !strings.Contains(block, "font-display:swap") || !regexp.MustCompile(`url\(/fonts/[a-z-]+\.woff2\)`).MatchString(block) {
+			t.Errorf("@font-face for %s lacks font-display:swap or a /fonts/ woff2 url", family)
+		}
+	}
+	if !strings.Contains(style, `font-family:"Instrument Sans"`) || !strings.Contains(style, `--mono:"JetBrains Mono"`) {
+		t.Error(":root lacks the Instrument Sans body face or the --mono token")
+	}
+	for _, m := range regexp.MustCompile(`[^\n]*font:[^;]*\bmonospace[^\n]*`).FindAllString(style, -1) {
+		if !strings.Contains(m, "--mono:") {
+			t.Errorf("monospace font rule outside --mono: %s", m)
+		}
+	}
+	if strings.Contains(style, "Inter") {
+		t.Error("style.css still mentions Inter")
+	}
+	html, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(html), `<link rel="preload" href="/fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>`) {
+		t.Error("index.html does not preload the Instrument Sans latin subset")
+	}
+	files, _, _, err := Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fonts/instrument-sans-latin.woff2", "fonts/jetbrains-mono-latin.woff2"} {
+		if len(files[name]) != 64 {
+			t.Errorf("manifest lacks %s", name)
+		}
+	}
+}
