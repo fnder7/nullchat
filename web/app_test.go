@@ -108,8 +108,8 @@ func TestFrontendCopyMatchesPersistenceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.") {
-		t.Fatal("footer does not describe the persistence and encryption contract")
+	if !strings.Contains(text, "History lasts only until the room closes.") {
+		t.Fatal("footer does not describe the persistence contract")
 	}
 	if strings.Contains(text, "No E2EE") {
 		t.Fatal("footer still claims there is no end-to-end encryption")
@@ -1255,5 +1255,43 @@ func TestFrontendHomeHasNoEyebrows(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\.primary\s*\{[^}]*justify-content:center`).MatchString(string(css)) {
 		t.Error(".primary does not centre its label")
+	}
+}
+
+func TestFrontendFooterAndDefaultTitle(t *testing.T) {
+	htmlBytes, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBytes, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, js := string(htmlBytes), string(jsBytes)
+	if strings.Contains(html, "/healthz") {
+		t.Error("footer still links to /healthz")
+	}
+	if !strings.Contains(html, "History lasts only until the room closes.") {
+		t.Error("footer lacks the honest history line")
+	}
+	start := strings.Index(html, "<footer")
+	end := strings.Index(html, "</footer>")
+	if start < 0 || end < start {
+		t.Fatal("footer not found")
+	}
+	if strings.Contains(html[start:end], "End-to-end") {
+		t.Error("footer still repeats the end-to-end claim")
+	}
+	if !strings.Contains(html, `placeholder="e.g. Weekend plans"`) {
+		t.Error("title placeholder is not the example")
+	}
+	if !strings.Contains(js, "DEFAULT_TITLE = 'Private conversation'") {
+		t.Error("default title is not Private conversation")
+	}
+	if !strings.Contains(js, "|| DEFAULT_TITLE") {
+		t.Error("default title fallback is gone")
+	}
+	if strings.Contains(html, "Quiet conversation") || strings.Contains(js, "Quiet conversation") {
+		t.Error("old default title text remains")
 	}
 }

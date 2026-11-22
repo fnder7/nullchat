@@ -368,11 +368,6 @@ footer {
   line-height:1.6;
 }
 
-footer a {
-  white-space:nowrap;
-  text-decoration:none;
-}
-
 footer>span:first-child {
   white-space:nowrap;
 }
@@ -1040,13 +1035,6 @@ footer>span:first-child {
     flex-wrap:wrap;
     gap:10px 20px;
     padding-top:17px;
-  }
-  footer>span:nth-child(2) {
-    order:3;
-    width:100%;
-  }
-  footer a {
-    margin-left:auto;
   }
   /* The chat is a fixed full-height column: head, conversation, composer. The sidebar is
      the room sheet and stays closed until the sheet opens. */

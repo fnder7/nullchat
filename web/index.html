@@ -31,7 +31,7 @@
         <p class="muted">Invite the person you want to talk to.</p>
         <form id="create-form">
           <label for="title">Title <span>optional</span></label>
-          <input id="title" name="title" maxlength="60" placeholder="Quiet conversation" autocomplete="off">
+          <input id="title" name="title" maxlength="60" placeholder="e.g. Weekend plans" autocomplete="off">
           <label for="ttl">How much time do you need?</label>
           <select id="ttl" name="ttl"><option value="1">1 minute · try it</option><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option></select>
           <label class="check"><input id="use-password" type="checkbox"> Protect with a password <span>optional</span></label>
@@ -62,7 +62,7 @@
       <p id="timer-alert" class="sr-only" role="status"></p>
       <aside id="room-sheet" class="room-sidebar">
         <button id="sheet-close" type="button" aria-label="Close">×</button>
-        <h2 id="room-title" tabindex="-1">Quiet conversation</h2>
+        <h2 id="room-title" tabindex="-1">Private conversation</h2>
         <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div></div>
         <h3 class="participants-title">Participants</h3>
         <ul id="participants" class="participants"></ul>
@@ -84,7 +84,7 @@
       <dialog id="end-dialog" aria-labelledby="end-dialog-text"><p id="end-dialog-text"></p><div class="dialog-actions"><button id="end-confirm" class="danger" type="button">End for both</button><button id="end-cancel" class="secondary" type="button" autofocus>Cancel</button></div></dialog>
     </main>
 
-    <footer><span>nullchat © 2026</span><span>History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.</span><a href="/healthz" target="_blank" rel="noreferrer">Server status</a></footer>
+    <footer><span>nullchat © 2026</span><span>History lasts only until the room closes.</span></footer>
   </div>
 </body>
 </html>
