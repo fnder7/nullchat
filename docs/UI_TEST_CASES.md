@@ -177,12 +177,12 @@ The strip (`#trust-strip`) sits above the messages; the badge (`#trust-badge`) s
 | ID | Preconditions and steps | Expected result |
 |---|---|---|
 | TYPE-01 | Open the home page. Read `document.fonts` and `getComputedStyle(document.body).fontFamily`. | Instrument Sans and JetBrains Mono are `loaded`; the body stack starts with "Instrument Sans". `/fonts/instrument-sans-latin.woff2` returns 200 as `font/woff2` and the served `/app.js`, `/style.css`, `/nav.js` match `web/`. |
-| TYPE-02 | Check headings and buttons on home, the guest screen, the chat and the sheet at 1280 and 375 wide. | No overflow (`scrollWidth` equals `innerWidth`, no clipped button or heading) and no broken wraps. |
+| TYPE-02 | Check headings and buttons on home, the guest screen, the chat and the sheet at 1280 and 375 wide. | No overflow (`scrollWidth` equals `innerWidth`, no clipped button or heading) and no broken wraps. Known defect, fixed in MR 3: the guest heading (24px, -4px tracking) and the home h1 (58px, -3px) are tracked too tight and their letters touch. |
 | TYPE-03 | Search the home, chat and sheet for the `↗` glyph, in a desktop browser and in iOS Safari. | It appears nowhere. The actions read "Create room", "Copy link" and "End the chat for both"; no blue emoji arrow on iOS. |
-| TYPE-04 | Send a message as the creator and wait for it to be accepted. | A drawn check with the accessible name "Sent" sits next to the time, vertically centred on it. Pending messages show "Sending…"; failed ones "Not sent". |
+| TYPE-04 | Send a message as the creator and wait for it to be accepted. | A drawn check with the accessible name "Sent" sits next to the time, vertically centred on it. Pending messages show "Sending…"; failed ones "Not sent". Verified at desktop (1280) only; not walked on mobile. |
 | TYPE-05 | Leave the composer empty and measure the send button. | It is disabled and neutral (line-colour border, muted icon, opacity 1). Its border has at least 3:1 contrast against the composer background. |
-| TYPE-06 | In a creator tab inside a room, set `location.hash` to an empty fragment. Then set it to a fresh `#invite=...&k=...` from another room. | The empty fragment does not reload and the chat stays. The new invite reloads the tab into the guest screen for that invite. |
-| TYPE-07 | Select text and focus an input. | The selection uses the accent tint with readable text and the caret is the accent colour. |
+| TYPE-06 | In a creator tab inside a room, set `location.hash` to an empty fragment. Then set it to a fresh `#invite=...&k=...` from another room. | The empty fragment does not reload and the chat stays. The new invite reloads the tab into the guest screen for that invite. Then call `history.back()`: the tab returns to `#room=...` (a reload), restores the original room from session storage, reconnects and the timer continues; no data loss and no broken state. |
+| TYPE-07 | Select text and focus an input. | The selection uses the accent tint with readable text and the caret is the accent colour. Walked in a browser: selecting the home h1 shows a lime highlight with dark text (screenshot); `caretColor` of `#title` and `#message` computes to rgb(204, 248, 139) = `--accent`. |
 
 ### Mobile chat shell
 
