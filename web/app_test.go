@@ -25,7 +25,6 @@ func TestFrontendStaticAccessibilityContract(t *testing.T) {
 		t.Error("subtle text color token is missing")
 	}
 	for _, selector := range []string{
-		".flow .flow-arrow",
 		"label span",
 		"input::placeholder,textarea::placeholder",
 		".card-footnote",
@@ -943,6 +942,56 @@ func TestFrontendShipsItsOwnFonts(t *testing.T) {
 	for _, name := range []string{"fonts/instrument-sans-latin.woff2", "fonts/jetbrains-mono-latin.woff2"} {
 		if len(files[name]) != 64 {
 			t.Errorf("manifest lacks %s", name)
+		}
+	}
+}
+
+func TestFrontendNoArrowGlyphs(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+	for name, text := range map[string]string{"index.html": html, "app.js": js} {
+		if strings.Contains(text, "↗") {
+			t.Errorf("%s still contains the arrow glyph", name)
+		}
+	}
+	for _, want := range []string{">Create room</button>", ">End the chat for both</button>"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %q", want)
+		}
+	}
+	for _, want := range []string{"copy.textContent = 'Copy link';", "'Link copied'"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("app.js lacks %q", want)
+		}
+	}
+	if strings.Count(js, "'Copy link'") < 2 {
+		t.Error("copy feedback reset must set 'Copy link' again")
+	}
+	if !regexp.MustCompile(`::selection\s*\{[^}]*var\(--accent\)`).MatchString(css) {
+		t.Error("style.css lacks an accent ::selection rule")
+	}
+	if !strings.Contains(css, "caret-color:var(--accent)") {
+		t.Error("style.css lacks caret-color:var(--accent)")
+	}
+	disabled := regexp.MustCompile(`\.send-button:disabled\s*\{[^}]*\}`).FindString(css)
+	if disabled == "" {
+		t.Fatal("no .send-button:disabled rule")
+	}
+	if m := regexp.MustCompile(`background:([^;}]*)`).FindStringSubmatch(disabled); m == nil || strings.Contains(m[1], "var(--accent)") {
+		t.Errorf("disabled send background must not be the accent: %s", disabled)
+	}
+	if strings.Contains(disabled, "opacity:.45") {
+		t.Errorf("disabled send keeps opacity:.45: %s", disabled)
+	}
+	for _, gone := range []string{".flow-arrow", ".card-symbol", ".primary span"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("style.css still styles %s", gone)
 		}
 	}
 }

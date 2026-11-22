@@ -80,6 +80,15 @@ button:disabled {
   opacity:.45;
 }
 
+::selection {
+  background:var(--accent);
+  color:#243019;
+}
+
+input,textarea {
+  caret-color:var(--accent);
+}
+
 [hidden] {
   display:none!important;
 }
@@ -194,7 +203,7 @@ h1 {
 
 .flow {
   display:flex;
-  gap:13px;
+  gap:13px 26px;
   align-items:center;
   margin-top:39px;
   flex-wrap:wrap;
@@ -209,10 +218,6 @@ h1 {
   font:11px "Instrument Sans",system-ui,sans-serif;
   color:#b8c1b2;
   margin-left:5px;
-}
-
-.flow .flow-arrow {
-  color:var(--muted-subtle);
 }
 
 .small-print {
@@ -247,11 +252,6 @@ h1 {
   display:flex;
   justify-content:space-between;
   align-items:center;
-}
-
-.card-symbol {
-  color:var(--accent);
-  font-size:23px;
 }
 
 .create-card h2 {
@@ -336,10 +336,6 @@ select {
 
 .primary:hover {
   background:#dfffaa;
-}
-
-.primary span {
-  font-size:19px;
 }
 
 .card-footnote {
@@ -901,6 +897,12 @@ footer>span:first-child {
   flex-shrink:0;
 }
 
+.send-button:disabled {
+  background:var(--line);
+  color:var(--muted);
+  opacity:1;
+}
+
 .composer-hint {
   display:flex;
   justify-content:space-between;
@@ -966,9 +968,6 @@ footer>span:first-child {
   }
   .flow {
     gap:9px;
-  }
-  .flow-arrow {
-    display:none;
   }
   .create-card {
     padding:25px;

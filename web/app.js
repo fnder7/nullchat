@@ -257,11 +257,11 @@ function buildInvite(body) {
   const warn = document.createElement('p'); warn.textContent = 'Anyone who opens this link takes the seat. Send it somewhere private.';
   const link = document.createElement('p'); link.className = 'trust-link'; link.textContent = url;
   const actions = document.createElement('div'); actions.className = 'trust-actions';
-  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy link ↗';
+  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy link';
   copy.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(url); copy.textContent = 'Link copied ✓'; }
+    try { await navigator.clipboard.writeText(url); copy.textContent = 'Link copied'; }
     catch { getSelection().selectAllChildren(link); copy.textContent = 'Copy the selected link'; }
-    setTimeout(() => { copy.textContent = 'Copy link ↗'; }, 3000);
+    setTimeout(() => { copy.textContent = 'Copy link'; }, 3000);
   });
   actions.append(copy);
   if (typeof navigator.share === 'function') {

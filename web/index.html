@@ -23,12 +23,12 @@
         <p class="eyebrow"><span class="dash"></span> A PRIVATE SPACE, FOR A WHILE</p>
         <h1>Just<br>talk<span class="accent">.</span></h1>
         <p class="intro-copy">No profile. No contact list.<br>One link, two people and a conversation<br class="desktop-break"> with its own time.</p>
-        <div class="flow"><span>01 <b>Create a room</b></span><span class="flow-arrow">↗</span><span>02 <b>Send the link</b></span><span class="flow-arrow">↗</span><span>03 <b>Be here</b></span></div>
+        <div class="flow"><span>01 <b>Create a room</b></span><span>02 <b>Send the link</b></span><span>03 <b>Be here</b></span></div>
         <div class="small-print"><span class="small-icon">◷</span><p>When the time runs out, the room closes.<br>No sign-up, no personal data.</p></div>
       </section>
 
       <section class="create-card" aria-labelledby="card-title">
-        <div class="card-top"><span id="card-eyebrow" class="eyebrow">NEW CONVERSATION</span><span class="card-symbol">↗</span></div>
+        <div class="card-top"><span id="card-eyebrow" class="eyebrow">NEW CONVERSATION</span></div>
         <h2 id="card-title">A place for two</h2>
         <p class="muted">Invite the person you want to talk to.</p>
         <form id="create-form">
@@ -39,7 +39,7 @@
           <label class="check"><input id="use-password" type="checkbox"> Protect with a password <span>optional</span></label>
           <div id="password-row" hidden><label for="password">Password <span>share it separately from the link</span></label><input id="password" type="password" autocomplete="new-password" maxlength="200"></div>
           <div class="room-facts"><span><span class="dot"></span> 2 participants</span><span>Invite only</span></div>
-          <button id="create-button" class="primary" type="submit">Create room <span>↗</span></button>
+          <button id="create-button" class="primary" type="submit">Create room</button>
         </form>
         <p id="home-error" class="error" role="alert" hidden></p>
         <p class="card-footnote">A conversation starts with a small step.</p>
@@ -71,7 +71,7 @@
         <section id="safety-panel" class="safety-panel"><svg class="safety-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2"/></svg><strong>End-to-end encrypted</strong><p>Messages are locked in this browser before they are sent. The server only sees ciphertext.</p><p class="safety-spec">AES-256-GCM · ECDH P-256</p></section>
         <section id="notify-panel" class="notify-panel" hidden><button id="notify-button" class="secondary" type="button">Turn on notifications</button><p id="notify-note"></p></section>
         <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
-        <button id="end-button" class="danger-link" type="button">End the chat for both ↗</button>
+        <button id="end-button" class="danger-link" type="button">End the chat for both</button>
       </aside>
       <div id="sheet-backdrop" hidden></div>
       <section class="conversation" aria-label="Conversation">
@@ -81,12 +81,12 @@
         <p id="chat-error" class="error chat-error" role="alert" hidden></p>
         <form id="message-form" class="composer"><label for="message" class="sr-only">Message</label><textarea id="message" rows="1" maxlength="4000" placeholder="What's on your mind?" disabled></textarea><button id="send-button" class="send-button" aria-label="Send message" type="submit" disabled>↑</button></form>
         <div class="composer-hint"><span>Enter to send · Shift + Enter for a new line</span><span id="byte-count" class="byte-count" aria-live="polite" hidden></span><span id="message-count">0 / 500 messages</span></div>
-        <div id="ended-panel" class="ended-panel" hidden><h3 id="ended-title" tabindex="-1">Conversation ended</h3><p>This room is no longer available.</p><a class="primary" href="/">Start a new conversation ↗</a></div>
+        <div id="ended-panel" class="ended-panel" hidden><h3 id="ended-title" tabindex="-1">Conversation ended</h3><p>This room is no longer available.</p><a class="primary" href="/">Start a new conversation</a></div>
       </section>
       <dialog id="end-dialog" aria-labelledby="end-dialog-text"><p id="end-dialog-text"></p><div class="dialog-actions"><button id="end-confirm" class="danger" type="button">End for both</button><button id="end-cancel" class="secondary" type="button" autofocus>Cancel</button></div></dialog>
     </main>
 
-    <footer><span>nullchat © 2026</span><span>History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.</span><a href="/healthz" target="_blank" rel="noreferrer">Server status ↗</a></footer>
+    <footer><span>nullchat © 2026</span><span>History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.</span><a href="/healthz" target="_blank" rel="noreferrer">Server status</a></footer>
   </div>
 </body>
 </html>
