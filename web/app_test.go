@@ -786,3 +786,43 @@ func TestFrontendMobileSheet(t *testing.T) {
 		t.Error("the timer card must be hidden inside the sheet")
 	}
 }
+
+func TestFrontendMobileKeyboard(t *testing.T) {
+	b, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	sync := funcBody(t, js, "function syncViewport(")
+	for _, want := range []string{"visualViewport", "vv.height", "vv.offsetTop", "--app-height", "removeProperty('--app-height')", "nearBottom(box)", "scrollHeight"} {
+		if !strings.Contains(sync, want) {
+			t.Errorf("syncViewport lacks %s", want)
+		}
+	}
+	for _, want := range []string{"visualViewport.addEventListener('resize'", "visualViewport.addEventListener('scroll'", "globalThis.visualViewport"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+	trust := funcBody(t, js, "function renderTrust(")
+	for _, want := range []string{"state.composerFocus", "MOBILE.matches", "'verify', 'verified', 'later'"} {
+		if !strings.Contains(trust, want) {
+			t.Errorf("renderTrust lacks %s", want)
+		}
+	}
+	for _, ev := range []string{"focusin", "focusout"} {
+		i := strings.Index(js, "$('message').addEventListener('"+ev+"'")
+		if i < 0 {
+			t.Fatalf("no %s handler on #message", ev)
+		}
+		line := js[i : i+strings.Index(js[i:], "\n")]
+		if strings.Contains(line, "e2ee.verified =") || strings.Contains(line, "trustOpen =") {
+			t.Errorf("%s handler must not change verification or trustOpen", ev)
+		}
+	}
+	for _, name := range []string{"async function enter(", "const restoreFailed = () => {"} {
+		if !strings.Contains(funcBody(t, js, name), "syncViewport()") {
+			t.Errorf("%s lacks syncViewport()", name)
+		}
+	}
+}

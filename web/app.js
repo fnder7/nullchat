@@ -16,7 +16,7 @@ const state = {
   pending: new Map(), failed: new Map(), accepted: new Map(),
   ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0,
   unseen: 0, unread: 0, timerWarned: false, notification: null,
-  trustOpen: false, trustShown: '', safetyCode: undefined,
+  trustOpen: false, composerFocus: false, trustShown: '', safetyCode: undefined,
 };
 // A create/join request is encrypted once and reused verbatim on retry, so the
 // Idempotency-Key replays the same room with key shares this tab still holds.
@@ -92,6 +92,7 @@ async function enter(credentials, fresh = null) {
   $('invite').hidden = true;
   $('chat').hidden = false;
   document.body.classList.add('in-chat');
+  syncViewport();
   $('room-title').textContent = state.title;
   $('chat-head-title').textContent = state.title;
   // The control that had focus is hidden now; without this, focus falls back to <body>.
@@ -171,7 +172,9 @@ function renderTrust() {
   // Two people but no code yet (the key is still being derived): keep what is shown.
   if (!state.ended && !state.keyError && state.room.participants.length > 1 && !state.safetyCode) return;
   const next = trustNow();
-  const shown = collapsible(next) && !state.trustOpen ? 'hidden' : next;
+  // The keyboard needs the room: hide the strip while typing. state.e2ee.verified and state.trustOpen stay as they are.
+  const forComposer = MOBILE.matches && state.composerFocus && ['verify', 'verified', 'later'].includes(next);
+  const shown = forComposer || (collapsible(next) && !state.trustOpen) ? 'hidden' : next;
   const b = badge(next);
   $('trust-badge').hidden = !b;
   if (b) { $('trust-badge').textContent = b.label; $('trust-badge').dataset.tone = b.tone; }
@@ -721,7 +724,22 @@ $('sheet-button').addEventListener('click', () => openSheet());
 $('sheet-close').addEventListener('click', () => closeSheet());
 $('sheet-backdrop').addEventListener('click', () => closeSheet());
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('end-dialog').open) closeSheet(); });
-MOBILE.addEventListener('change', () => { if (!MOBILE.matches) closeSheet({ restoreFocus: false }); });
+MOBILE.addEventListener('change', () => { if (!MOBILE.matches) closeSheet({ restoreFocus: false }); syncViewport(); });
+// iOS Safari keeps the layout viewport under the keyboard: follow the visual one while the chat is on screen.
+function syncViewport() {
+  const chat = $('chat'), vv = globalThis.visualViewport;
+  if (!vv || chat.hidden || !MOBILE.matches) { chat.style.removeProperty('--app-height'); chat.style.removeProperty('top'); return; }
+  const box = $('messages'), wasAtBottom = nearBottom(box);
+  chat.style.setProperty('--app-height', `${vv.height}px`);
+  chat.style.top = `${vv.offsetTop}px`;
+  if (wasAtBottom) box.scrollTop = box.scrollHeight;
+}
+if (globalThis.visualViewport) {
+  visualViewport.addEventListener('resize', syncViewport);
+  visualViewport.addEventListener('scroll', syncViewport);
+}
+$('message').addEventListener('focusin', () => { state.composerFocus = true; renderTrust(); });
+$('message').addEventListener('focusout', () => { state.composerFocus = false; renderTrust(); });
 let endReturnTo = null;
 function openEndDialog(reason, returnTo) {
   endReturnTo = returnTo;
@@ -929,6 +947,7 @@ if (params.has('invite')) {
     const restoreFailed = () => {
       $('home').hidden = false; $('chat').hidden = true;
       document.body.classList.remove('in-chat');
+      syncViewport();
       history.replaceState(null, '', '/');
       showError('home-error', 'This tab\'s keys could not be restored. Create a new room.');
     };
