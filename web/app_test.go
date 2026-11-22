@@ -222,3 +222,47 @@ func TestFrontendKeepsChatUsableWithKeyboardAndScreenReader(t *testing.T) {
 		}
 	}
 }
+
+// Message text is untrusted: links must be built as nodes and open detached from this tab.
+func TestFrontendBuildsMessageLinksSafely(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, "innerHTML") || strings.Contains(text, "insertAdjacentHTML") {
+		t.Error("frontend writes markup instead of building nodes")
+	}
+	fill := text[strings.Index(text, "function fillText("):]
+	fill = fill[:strings.Index(fill, "\n}\n")]
+	for _, required := range []string{"linkify(text)", "a.textContent = segment.text", "a.rel = 'noopener noreferrer nofollow'", "a.target = '_blank'"} {
+		if !strings.Contains(fill, required) {
+			t.Errorf("fillText lacks %q", required)
+		}
+	}
+}
+
+// Notifications live in the OS history, outside end-to-end encryption: they may name
+// the sender but never carry message text or the encrypted room title.
+func TestFrontendNotificationsCarryNoPlaintext(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, name := range []string{"function notify(", "function noteIncoming("} {
+		body := text[strings.Index(text, name):]
+		body = body[:strings.Index(body, "\n}\n")]
+		for _, leak := range []string{"state.plain", ".text", "state.title"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("%s reads %s", name, leak)
+			}
+		}
+	}
+	if !strings.Contains(text, "new Notification('nullchat', { body, tag:") {
+		t.Error("notification title is not the fixed app name")
+	}
+	if !strings.Contains(text, "if (document.hidden) {") {
+		t.Error("notifications are not limited to a background tab")
+	}
+}
