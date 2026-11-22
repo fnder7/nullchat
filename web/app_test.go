@@ -715,3 +715,74 @@ func TestFrontendMobileShellLayout(t *testing.T) {
 		t.Error("finish() clears .ending on the timer card twice")
 	}
 }
+
+func TestFrontendMobileSheet(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	js, css, html := read("app.js"), read("style.css"), read("index.html")
+	for _, want := range []string{`id="sheet-close"`, `aria-label="Close"`, `id="sheet-backdrop"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	if strings.Index(html, `id="sheet-close"`) < strings.Index(html, `id="room-sheet"`) {
+		t.Error("#sheet-close must be inside .room-sidebar")
+	}
+	open := funcBody(t, js, "function openSheet(")
+	for _, want := range []string{"aria-modal", "'dialog'", "Room details", "inert = true", "$('sheet-close').focus()", "aria-expanded", "classList.add('open')"} {
+		if !strings.Contains(open, want) {
+			t.Errorf("openSheet lacks %s", want)
+		}
+	}
+	cl := funcBody(t, js, "function closeSheet(")
+	for _, want := range []string{"removeAttribute('aria-modal')", "removeAttribute('role')", "inert = false", "classList.remove('open')", "if (restoreFocus) $('sheet-button').focus()"} {
+		if !strings.Contains(cl, want) {
+			t.Errorf("closeSheet lacks %s", want)
+		}
+	}
+	if !regexp.MustCompile(`addEventListener\('keydown'[\s\S]{0,200}'Escape'[\s\S]{0,200}closeSheet\(`).MatchString(js) {
+		t.Error("Escape must close the sheet")
+	}
+	if !strings.Contains(js, "$('end-dialog').open") || !regexp.MustCompile(`'Escape'[\s\S]{0,120}end-dialog'\)\.open|end-dialog'\)\.open[\s\S]{0,120}'Escape'`).MatchString(js) {
+		t.Error("the Escape handler must ignore the event while the end dialog is open")
+	}
+	if !regexp.MustCompile(`\$\('sheet-backdrop'\)\.addEventListener\('click'[^\n]*closeSheet\(`).MatchString(js) {
+		t.Error("backdrop click must close the sheet")
+	}
+	if !regexp.MustCompile(`\$\('sheet-close'\)\.addEventListener\('click'[^\n]*closeSheet\(`).MatchString(js) ||
+		!regexp.MustCompile(`\$\('sheet-button'\)\.addEventListener\('click'[^\n]*openSheet\(`).MatchString(js) {
+		t.Error("sheet button and close button must open and close the sheet")
+	}
+	if !regexp.MustCompile(`MOBILE\.addEventListener\('change'[\s\S]{0,120}closeSheet\(\{ restoreFocus: false \}\)`).MatchString(js) {
+		t.Error("leaving the mobile width must close the sheet without moving focus")
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "closeSheet({ restoreFocus: false })") {
+		t.Error("finish() must close the sheet without restoring focus")
+	}
+	if strings.Contains(funcBody(t, js, "function openEndDialog("), "closeSheet") {
+		t.Error("openEndDialog must not touch the sheet")
+	}
+	if !strings.Contains(js, "$('end-dialog').addEventListener('close', () => (endReturnTo?.isConnected ? endReturnTo : $('trust-title')).focus());") {
+		t.Error("end dialog close handler must still return focus to endReturnTo")
+	}
+	m := mobileCSS(css)
+	for _, want := range []string{".room-sidebar.open", "inset:auto 0 0 0", "max-height:85%", "overflow-y:auto", "transform", "#sheet-backdrop", "prefers-reduced-motion"} {
+		if !strings.Contains(css, want) && !strings.Contains(m, want) {
+			t.Errorf("style.css lacks %s", want)
+		}
+	}
+	if !regexp.MustCompile(`prefers-reduced-motion[\s\S]{0,120}\.room-sidebar`).MatchString(css) {
+		t.Error("reduced motion must disable the sheet transition")
+	}
+	if !regexp.MustCompile(`#sheet-close,\s*#sheet-backdrop\s*\{\s*display:none`).MatchString(css) {
+		t.Error("#sheet-close and #sheet-backdrop must be hidden above 700px")
+	}
+	if !regexp.MustCompile(`\.room-sidebar \.timer-card\s*\{\s*display:none`).MatchString(m) {
+		t.Error("the timer card must be hidden inside the sheet")
+	}
+}

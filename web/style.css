@@ -951,6 +951,11 @@ footer>span:first-child {
   }
 }
 
+#sheet-close,
+#sheet-backdrop {
+  display:none;
+}
+
 @media(max-width:700px) {
   .shell {
     padding:0 20px;
@@ -1076,6 +1081,69 @@ footer>span:first-child {
   }
   .room-sidebar {
     display:none;
+  }
+  .room-sidebar.open {
+    display:block;
+    position:fixed;
+    inset:auto 0 0 0;
+    z-index:20;
+    max-height:85%;
+    overflow-y:auto;
+    padding:12px 20px 24px;
+    background:var(--panel);
+    border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;
+    animation:sheet-in .2s ease-out;
+  }
+  @keyframes sheet-in {
+    from {
+      transform:translateY(100%);
+    }
+    to {
+      transform:none;
+    }
+  }
+  @media(prefers-reduced-motion:reduce) {
+    .room-sidebar.open {
+      animation:none;
+    }
+  }
+  #sheet-close {
+    display:block;
+    margin:0 -10px 0 auto;
+    width:44px;
+    height:44px;
+    border:0;
+    border-radius:8px;
+    background:transparent;
+    color:var(--text);
+    font-size:24px;
+    line-height:1;
+  }
+  #sheet-backdrop:not([hidden]) {
+    display:block;
+    position:fixed;
+    inset:0;
+    z-index:10;
+    background:rgba(0,0,0,.55);
+  }
+  .room-sidebar .timer-card {
+    display:none;
+  }
+  .room-sidebar #room-title {
+    font-size:22px;
+    margin:0 0 16px;
+    overflow-wrap:anywhere;
+  }
+  .room-sidebar .participants li {
+    font-size:14px;
+  }
+  .room-sidebar .avatar {
+    flex:none;
+  }
+  .room-sidebar .participants small {
+    margin-left:auto;
+    color:var(--muted);
   }
   .conversation {
     flex:1;

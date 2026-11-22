@@ -459,6 +459,7 @@ function connection(connected, label) {
 }
 function finish(label) {
   state.ended = true;
+  closeSheet({ restoreFocus: false });
   if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);
   connection(false, label);
@@ -690,6 +691,37 @@ const END_COPY = {
   mismatch: "The codes don't match. The person on the other end may not be your contact. End the conversation for both?",
   broken: 'Key verification failed, so this conversation is not safe. End it for both?',
 };
+function openSheet() {
+  const sheet = $('room-sheet');
+  if (sheet.classList.contains('open')) return;
+  sheet.classList.add('open');
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', 'Room details');
+  $('sheet-backdrop').hidden = false;
+  $('sheet-button').setAttribute('aria-expanded', 'true');
+  document.querySelector('.chat-head').inert = true;
+  document.querySelector('.conversation').inert = true;
+  $('sheet-close').focus();
+}
+function closeSheet({ restoreFocus = true } = {}) {
+  const sheet = $('room-sheet');
+  if (!sheet.classList.contains('open')) return;
+  sheet.classList.remove('open');
+  sheet.removeAttribute('role');
+  sheet.removeAttribute('aria-modal');
+  sheet.removeAttribute('aria-label');
+  $('sheet-backdrop').hidden = true;
+  $('sheet-button').setAttribute('aria-expanded', 'false');
+  document.querySelector('.chat-head').inert = false;
+  document.querySelector('.conversation').inert = false;
+  if (restoreFocus) $('sheet-button').focus();
+}
+$('sheet-button').addEventListener('click', () => openSheet());
+$('sheet-close').addEventListener('click', () => closeSheet());
+$('sheet-backdrop').addEventListener('click', () => closeSheet());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('end-dialog').open) closeSheet(); });
+MOBILE.addEventListener('change', () => { if (!MOBILE.matches) closeSheet({ restoreFocus: false }); });
 let endReturnTo = null;
 function openEndDialog(reason, returnTo) {
   endReturnTo = returnTo;

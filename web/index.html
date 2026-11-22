@@ -62,6 +62,7 @@
       <header class="chat-head"><h2 id="chat-head-title" tabindex="-1"></h2><span id="chat-head-timer" class="timer-chip" aria-hidden="true">--:--</span><button id="sheet-button" type="button" aria-controls="room-sheet" aria-expanded="false" aria-label="Room details">⋯</button></header>
       <p id="timer-alert" class="sr-only" role="status"></p>
       <aside id="room-sheet" class="room-sidebar">
+        <button id="sheet-close" type="button" aria-label="Close">×</button>
         <p class="eyebrow">YOUR SPACE</p><h2 id="room-title" tabindex="-1">Quiet conversation</h2>
         <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div></div>
         <div class="participants-heading"><span class="eyebrow">PARTICIPANTS</span><span id="participant-count">1 / 2</span></div>
@@ -71,6 +72,7 @@
         <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
         <button id="end-button" class="danger-link" type="button">End the chat for both ↗</button>
       </aside>
+      <div id="sheet-backdrop" hidden></div>
       <section class="conversation" aria-label="Conversation">
         <div class="conversation-head"><div class="connection-state"><span><span class="dot" id="connection-dot"></span><span id="connection-status" role="status">Connecting…</span></span><button id="reconnect-button" class="retry-connection" type="button" hidden>Reconnect</button></div><span class="conversation-label">PRIVATE CONVERSATION</span><button id="trust-badge" class="trust-badge" type="button" aria-controls="trust-strip" aria-expanded="false" hidden></button><p id="trust-status" class="sr-only" role="status"></p></div>
         <section id="trust-strip" class="trust-strip" aria-labelledby="trust-title" hidden><h3 id="trust-title" tabindex="-1"></h3><div id="trust-body"></div><p id="safety-alert" class="sr-only" role="alert"></p></section>
