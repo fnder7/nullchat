@@ -855,3 +855,25 @@ func TestFrontendMobileKeyboard(t *testing.T) {
 		}
 	}
 }
+
+// iOS Safari zooms the page when a focused field's text is under 16px, which pushed the
+// mobile chat's badge, send button and ⋯ off screen. Every phone-width field must be 16px.
+func TestFrontendMobileFieldsAvoidIOSZoom(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := mobileCSS(t, string(css))
+	rule := regexp.MustCompile(`(?s)Fields at 16px[^{]*\{[^}]*\}`).FindString(m)
+	if rule == "" {
+		t.Fatal("mobile block has no 16px field rule")
+	}
+	for _, selector := range []string{"input", "select", ".composer textarea"} {
+		if !strings.Contains(rule, selector) {
+			t.Errorf("16px field rule does not cover %s", selector)
+		}
+	}
+	if !strings.Contains(rule, "font-size:16px") {
+		t.Error("field rule is not 16px")
+	}
+}
