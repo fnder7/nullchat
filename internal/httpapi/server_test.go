@@ -818,3 +818,29 @@ func TestAdmissionBudgetsAreIndependent(t *testing.T) {
 		t.Fatalf("create after window reset: status %d, want 201", w.Code)
 	}
 }
+
+// The self-hosted fonts are static and carry no tokens, so they may be cached; everything
+// else (pages, scripts, API) stays no-store, because responses can carry session and invite
+// tokens and the app must load the code this server serves now.
+func TestCacheControlAllowsOnlyFonts(t *testing.T) {
+	h := New(memory.New()).Handler(web.Handler())
+	for _, test := range []struct{ path, want string }{
+		{"/fonts/instrument-sans-latin.woff2", "public, max-age=2592000, no-transform"},
+		{"/fonts/jetbrains-mono-latin-ext.woff2", "public, max-age=2592000, no-transform"},
+		{"/", "no-store, no-transform"},
+		{"/app.js", "no-store, no-transform"},
+		{"/style.css", "no-store, no-transform"},
+		{"/fonts/", "no-store, no-transform"},
+		{"/fonts/OFL-InstrumentSans.txt", "no-store, no-transform"},
+		{"/fonts/../app.js", "no-store, no-transform"},
+		{"/healthz", "no-store, no-transform"},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if got := w.Header().Get("Cache-Control"); got != test.want {
+				t.Fatalf("Cache-Control = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
