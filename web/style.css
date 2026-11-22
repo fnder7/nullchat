@@ -690,6 +690,15 @@ footer>span:first-child {
   background:#1d241d;
 }
 
+.composer:focus-within {
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+[tabindex="-1"]:focus {
+  outline:none;
+}
+
 .composer textarea {
   resize:none;
   max-height:120px;

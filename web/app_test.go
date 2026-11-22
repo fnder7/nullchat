@@ -171,3 +171,54 @@ func TestFrontendReusesPreparedIdempotentRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestFrontendKeepsChatUsableWithKeyboardAndScreenReader(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	html, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The textarea drops its own outline, so the composer must show focus instead.
+	if !regexp.MustCompile(`\.composer:focus-within\s*\{[^}]*outline:\s*2px solid var\(--accent\)`).Match(css) {
+		t.Error("composer has no visible focus indicator")
+	}
+
+	// #messages is a live region: rebuilding it re-announces the whole history.
+	render := text[strings.Index(text, "function renderMessages("):]
+	render = render[:strings.Index(render, "\n}\n")]
+	if strings.Contains(render, "replaceChildren") {
+		t.Error("renderMessages rebuilds the live message log instead of reusing nodes")
+	}
+	if !strings.Contains(render, "patchNode(node, fresh)") {
+		t.Error("renderMessages does not patch existing message nodes in place")
+	}
+
+	// A failed key check must reach assistive technology through an alert.
+	if !strings.Contains(string(html), `<p id="safety-alert" class="sr-only" role="alert"></p>`) {
+		t.Error("key failure alert region is missing")
+	}
+	failure := text[strings.Index(text, "function keyFailure("):]
+	failure = failure[:strings.Index(failure, "\n}\n")]
+	if !strings.Contains(failure, "$('safety-alert').textContent =") {
+		t.Error("keyFailure does not announce the failure")
+	}
+
+	// Focus must follow the screen that replaces the one holding it.
+	for id, call := range map[string]string{"room-title": "$('room-title').focus();", "ended-title": "$('ended-title').focus();"} {
+		if !strings.Contains(string(html), `id="`+id+`" tabindex="-1"`) {
+			t.Errorf("#%s cannot receive programmatic focus", id)
+		}
+		if !strings.Contains(text, call) {
+			t.Errorf("focus is never moved to #%s", id)
+		}
+	}
+}

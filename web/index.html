@@ -55,11 +55,11 @@
 
     <main id="chat" class="chat-layout" hidden>
       <aside class="room-sidebar">
-        <p class="eyebrow">YOUR SPACE</p><h2 id="room-title">Quiet conversation</h2>
+        <p class="eyebrow">YOUR SPACE</p><h2 id="room-title" tabindex="-1">Quiet conversation</h2>
         <div class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div></div>
         <div class="participants-heading"><span class="eyebrow">PARTICIPANTS</span><span id="participant-count">1 / 2</span></div>
         <ul id="participants" class="participants"></ul>
-        <section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><strong id="safety-code">waiting for your contact</strong><p id="safety-note">Messages are encrypted in the browser. The server sees only ciphertext. Compare this code with your contact by voice: it must match.</p></section>
+        <section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><strong id="safety-code">waiting for your contact</strong><p id="safety-note">Messages are encrypted in the browser. The server sees only ciphertext. Compare this code with your contact by voice: it must match.</p><p id="safety-alert" class="sr-only" role="alert"></p></section>
         <section id="share-panel" class="share-panel" hidden><h3>Invite your contact</h3><p>Send this link personally.<br>It can be used once.</p><input id="invite-link" aria-label="Invite link" readonly><button id="copy-button" class="secondary" type="button">Copy link ↗</button></section>
         <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
         <button id="end-button" class="danger-link" type="button">End the chat for both ↗</button>
@@ -70,7 +70,7 @@
         <p id="chat-error" class="error chat-error" role="alert" hidden></p>
         <form id="message-form" class="composer"><label for="message" class="sr-only">Message</label><textarea id="message" rows="1" maxlength="4000" placeholder="What's on your mind?" disabled></textarea><button id="send-button" class="send-button" aria-label="Send message" type="submit" disabled>↑</button></form>
         <div class="composer-hint"><span>Enter to send · Shift + Enter for a new line</span><span id="message-count">0 / 500</span></div>
-        <div id="ended-panel" class="ended-panel" hidden><h3 id="ended-title">Conversation ended</h3><p>This room is no longer available.</p><a class="primary" href="/">Start a new conversation ↗</a></div>
+        <div id="ended-panel" class="ended-panel" hidden><h3 id="ended-title" tabindex="-1">Conversation ended</h3><p>This room is no longer available.</p><a class="primary" href="/">Start a new conversation ↗</a></div>
       </section>
     </main>
 
