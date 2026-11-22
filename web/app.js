@@ -1,5 +1,6 @@
 import * as e2ee from './crypto.js';
 import * as keystore from './keystore.js';
+import { linkify } from './linkify.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_RECONNECT_ATTEMPTS = 8;
@@ -11,6 +12,7 @@ const state = {
   plain: new Map(), flags: new Map(), events: Promise.resolve(), outbox: Promise.resolve(), lastAccepted: 0, lastSequence: 0,
   pending: new Map(), failed: new Map(), accepted: new Map(),
   ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0,
+  unseen: 0, unread: 0, timerWarned: false, notification: null,
 };
 // A create/join request is encrypted once and reused verbatim on retry, so the
 // Idempotency-Key replays the same room with key shares this tab still holds.
@@ -83,10 +85,11 @@ async function enter(credentials, fresh = null) {
   $('room-title').textContent = state.title;
   // The control that had focus is hidden now; without this, focus falls back to <body>.
   $('room-title').focus();
-  document.title = `${state.title} · nullchat`;
+  updateTitle();
   await establishKey();
   renderParticipants();
   renderMessages();
+  renderNotify();
   updateTimer();
   connect();
 }
@@ -163,7 +166,8 @@ function buildMessage(message, pending = false) {
   const time = document.createElement('span'); time.textContent = status === 'pending' ? 'Sending…' : status === 'failed' ? 'Not sent' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   meta.append(name, time);
   const bubble = document.createElement('div'); bubble.className = 'bubble';
-  bubble.textContent = plain?.error ? '⚠ This message could not be decrypted' : (plain?.text ?? '…');
+  if (plain?.error) bubble.textContent = '⚠ This message could not be decrypted';
+  else fillText(bubble, plain?.text ?? '…');
   article.append(meta, bubble);
   if (flag?.missing) {
     const note = document.createElement('p'); note.className = 'message-note';
@@ -178,6 +182,18 @@ function buildMessage(message, pending = false) {
   }
   return article;
 }
+// Links are built as nodes, never as markup: the text itself is the visible label,
+// so what the reader sees is where the link goes.
+function fillText(parent, text) {
+  for (const segment of linkify(text)) {
+    if (!segment.href) { parent.append(segment.text); continue; }
+    const a = document.createElement('a');
+    a.href = segment.href; a.textContent = segment.text;
+    a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; a.referrerPolicy = 'no-referrer';
+    a.title = `Opens ${new URL(segment.href).hostname} in a new tab`;
+    parent.append(a);
+  }
+}
 function buildEmptyState() {
   const alone = state.room.participants.length === 1;
   const empty = document.createElement('div'); empty.className = 'empty-state'; empty.dataset.key = `empty:${alone}`;
@@ -191,7 +207,9 @@ function buildEmptyState() {
 // is written only where it changed, so a screen reader hears the change and no more.
 function patchNode(node, fresh) {
   if (node.isEqualNode(fresh)) return;
-  if (node.childElementCount !== fresh.childElementCount) { node.replaceChildren(...fresh.childNodes); node.className = fresh.className; return; }
+  // Mixed content (text around links): text nodes are not children, so swap it whole.
+  const mixed = [...node.childNodes, ...fresh.childNodes].some((n) => n.nodeType === Node.TEXT_NODE) && (node.childElementCount || fresh.childElementCount);
+  if (mixed || node.childElementCount !== fresh.childElementCount) { node.replaceChildren(...fresh.childNodes); node.className = fresh.className; return; }
   node.className = fresh.className;
   [...node.children].forEach((child, i) => {
     const next = fresh.children[i];
@@ -224,7 +242,7 @@ function renderMessages() {
   }
   for (const node of [...box.children]) if (!keep.has(node.dataset.key)) node.remove();
   if ([...state.flags.values()].some((f) => f.replay)) showError('chat-error', 'The server replayed or reordered a message. It is hidden.');
-  $('message-count').textContent = `${state.room.messages.length} / 500`;
+  $('message-count').textContent = `${state.room.messages.length} / 500 messages`;
   box.scrollTop = atBottom ? box.scrollHeight : oldTop;
 }
 
@@ -244,7 +262,54 @@ async function decryptAll() {
   const next = Math.max(state.e2ee.next_counter, state.lastAccepted + 1);
   if (next !== state.e2ee.next_counter) { state.e2ee.next_counter = next; save(); }
 }
+const nearBottom = (box = $('messages')) => box.scrollHeight - box.scrollTop - box.clientHeight < 100;
+function showUnseen() {
+  $('jump-button').hidden = !state.unseen;
+  $('jump-button').textContent = `${state.unseen} new message${state.unseen === 1 ? '' : 's'} ↓`;
+}
+function updateTitle() {
+  document.title = `${state.unread ? `(${state.unread}) ` : ''}${state.title} · nullchat`;
+}
+// A message from the contact that lands out of view: a jump button inside the chat,
+// a counter in the tab title while the tab is in the background.
+function noteIncoming(message) {
+  if (!nearBottom()) { state.unseen += 1; showUnseen(); }
+  if (document.hidden) {
+    state.unread += 1; updateTitle();
+    const sender = state.room.participants.find((p) => p.id === message.sender_id)?.name || 'Your contact';
+    notify(state.unread === 1 ? `${sender} sent a message` : `${sender}: ${state.unread} new messages`);
+  }
+}
+
+// System notifications, opt-in, only while the tab is in the background. They never
+// carry message text or the room title: the OS keeps notifications in its own history,
+// outside end-to-end encryption. The sender's pseudonym is already known to the server.
+const NOTIFY_KEY = 'nullchat:notify';
+const notifySupported = () => 'Notification' in globalThis;
+const notifyOn = () => notifySupported() && Notification.permission === 'granted' && sessionStorage.getItem(NOTIFY_KEY) === '1';
+function renderNotify() {
+  $('notify-panel').hidden = !notifySupported() || state.ended;
+  if (!notifySupported()) return;
+  const denied = Notification.permission === 'denied';
+  $('notify-button').disabled = denied;
+  $('notify-button').textContent = denied ? 'Notifications are blocked' : notifyOn() ? 'Turn off notifications' : 'Turn on notifications';
+  $('notify-note').textContent = denied
+    ? 'Allow notifications for this site in the browser settings.'
+    : 'Shown only while this tab is in the background, without the message text.';
+}
+function notify(body) {
+  if (!notifyOn()) return;
+  state.notification?.close();
+  try {
+    // One notification per room: a newer one replaces the last instead of piling up.
+    const n = new Notification('nullchat', { body, tag: `nullchat:${state.room.id}`, icon: '/favicon.svg' });
+    n.onclick = () => { window.focus(); n.close(); };
+    state.notification = n;
+  } catch { /* e.g. Android Chrome allows only service-worker notifications */ }
+}
+function clearNotification() { state.notification?.close(); state.notification = null; }
 async function receiveMessage(message) {
+  const incoming = message.sender_id !== state.self.id && !state.room.messages.some((m) => m.id === message.id);
   if (!state.room.messages.some((m) => m.id === message.id)) state.room.messages.push(message);
   state.room.messages.sort((a, b) => a.sequence - b.sequence);
   await decryptAll();
@@ -254,6 +319,7 @@ async function receiveMessage(message) {
     state.failed.delete(message.client_message_id);
   }
   renderMessages();
+  if (incoming && !state.flags.get(message.id)?.replay) noteIncoming(message);
 }
 function connection(connected, label) {
   state.connected = connected;
@@ -261,7 +327,7 @@ function connection(connected, label) {
   $('connection-dot').style.background = connected ? 'var(--accent)' : 'var(--muted)';
   const canSend = connected && !state.ended && Boolean(state.messageKey) && !state.keyError;
   $('message').disabled = !canSend;
-  $('send-button').disabled = !canSend;
+  $('send-button').disabled = !canSend || !$('message').value.trim();
   $('message').placeholder = state.messageKey ? 'What\'s on your mind?' : 'Waiting for your contact: the shared key appears once they join';
   $('reconnect-button').hidden = connected || state.ended || state.retry < MAX_RECONNECT_ATTEMPTS;
 }
@@ -287,6 +353,9 @@ function finish(label) {
   document.querySelector('.composer-hint').hidden = true;
   $('ended-title').textContent = label;
   $('ended-panel').hidden = false;
+  state.unseen = 0; showUnseen();
+  $('timer-card').classList.remove('ending');
+  clearNotification(); renderNotify();
   $('ended-title').focus();
 }
 function socketIsOpen(socket = state.socket) {
@@ -371,7 +440,9 @@ async function handle(ws, data) {
     await receiveMessage(payload);
   } else if (type === 'ack') await receiveMessage(payload); // may overtake the peer's event; not part of the gap check
   else if (type === 'participants') {
+    const joined = payload.length > state.room.participants.length && payload.some((p) => p.id !== state.self.id);
     state.room.participants = payload;
+    if (joined && document.hidden) notify('Your contact joined the room');
     await establishKey();
     await decryptAll();
     connection(state.connected, $('connection-status').textContent);
@@ -427,6 +498,12 @@ function updateTimer() {
   const remaining = Math.max(0, Math.ceil((Date.parse(state.room.expires_at) - Date.now()) / 1000));
   $('timer').textContent = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
   $('timer-bar').style.width = `${Math.min(100, remaining / state.totalSeconds * 100)}%`;
+  $('timer-card').classList.toggle('ending', remaining <= 60);
+  // Announced once; a one-minute room does not need to be told at its start.
+  if (remaining <= 60 && !state.timerWarned && state.totalSeconds > 90) {
+    state.timerWarned = true;
+    $('timer-alert').textContent = 'One minute left. The room will close and its history will be gone.';
+  }
 }
 
 async function prepareCreate() {
@@ -533,13 +610,44 @@ $('message-form').addEventListener('submit', async (event) => {
   if (new TextEncoder().encode(text).length > e2ee.MAX_TEXT_BYTES) { showError('chat-error', 'Message too long: 4000 bytes at most (about 2000 Cyrillic or 1000 emoji characters).'); return; }
   const entry = { client_message_id: crypto.randomUUID(), text, ciphertext: '', sender_id: state.self.id, status: 'pending' };
   state.pending.set(entry.client_message_id, entry);
-  $('message').value = ''; $('message').style.height = 'auto';
+  $('message').value = ''; $('message').style.height = 'auto'; updateComposer();
   showError('chat-error');
   renderMessages(); $('messages').scrollTop = $('messages').scrollHeight;
   enqueue(entry);
 });
 $('message').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('message-form').requestSubmit(); } });
-$('message').addEventListener('input', () => { $('message').style.height = 'auto'; $('message').style.height = `${Math.min($('message').scrollHeight, 120)}px`; });
+// Send is offered only for something sendable; the byte budget shows up near its end.
+function updateComposer() {
+  const bytes = new TextEncoder().encode($('message').value.trim()).length;
+  $('send-button').disabled = $('message').disabled || !bytes;
+  $('byte-count').hidden = bytes < e2ee.MAX_TEXT_BYTES * 0.8;
+  $('byte-count').textContent = bytes > e2ee.MAX_TEXT_BYTES ? `${bytes - e2ee.MAX_TEXT_BYTES} bytes over the limit` : `${e2ee.MAX_TEXT_BYTES - bytes} bytes left`;
+  $('byte-count').classList.toggle('over', bytes > e2ee.MAX_TEXT_BYTES);
+}
+$('message').addEventListener('input', () => { $('message').style.height = 'auto'; $('message').style.height = `${Math.min($('message').scrollHeight, 120)}px`; updateComposer(); });
+$('messages').addEventListener('scroll', () => { if (state.unseen && nearBottom()) { state.unseen = 0; showUnseen(); } }, { passive: true });
+$('jump-button').addEventListener('click', () => {
+  const box = $('messages');
+  box.scrollTo({ top: box.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  state.unseen = 0; showUnseen();
+  // The button is gone now; hand focus to where the next action happens.
+  if (!$('message').disabled) $('message').focus(); else box.focus();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  clearNotification();
+  if (state.unread) { state.unread = 0; updateTitle(); }
+});
+$('notify-button').addEventListener('click', async () => {
+  if (notifyOn()) sessionStorage.setItem(NOTIFY_KEY, '0');
+  else {
+    // Asked only here, on a click: browsers ignore or penalise prompts nobody asked for.
+    const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (permission === 'granted') sessionStorage.setItem(NOTIFY_KEY, '1');
+  }
+  renderNotify();
+});
+$('invite-link').addEventListener('focus', () => $('invite-link').select());
 setInterval(updateTimer, 1000);
 
 const params = new URLSearchParams(location.hash.slice(1));
