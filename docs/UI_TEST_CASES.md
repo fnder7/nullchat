@@ -172,6 +172,18 @@ The strip (`#trust-strip`) sits above the messages; the badge (`#trust-badge`) s
 | VIEW-07 | Compare user-facing texts with the current storage contract. | The UI does not claim that confirmed history is lost on a backend restart if it is stored in PostgreSQL. |
 | VIEW-08 | Run a Lighthouse accessibility audit of the home page. | No failed accessibility audits; interactive elements have consistent visible and accessible names. |
 
+### Type and global polish
+
+| ID | Preconditions and steps | Expected result |
+|---|---|---|
+| TYPE-01 | Open the home page. Read `document.fonts` and `getComputedStyle(document.body).fontFamily`. | Instrument Sans and JetBrains Mono are `loaded`; the body stack starts with "Instrument Sans". `/fonts/instrument-sans-latin.woff2` returns 200 as `font/woff2` and the served `/app.js`, `/style.css`, `/nav.js` match `web/`. |
+| TYPE-02 | Check headings and buttons on home, the guest screen, the chat and the sheet at 1280 and 375 wide. | No overflow (`scrollWidth` equals `innerWidth`, no clipped button or heading) and no broken wraps. |
+| TYPE-03 | Search the home, chat and sheet for the `↗` glyph, in a desktop browser and in iOS Safari. | It appears nowhere. The actions read "Create room", "Copy link" and "End the chat for both"; no blue emoji arrow on iOS. |
+| TYPE-04 | Send a message as the creator and wait for it to be accepted. | A drawn check with the accessible name "Sent" sits next to the time, vertically centred on it. Pending messages show "Sending…"; failed ones "Not sent". |
+| TYPE-05 | Leave the composer empty and measure the send button. | It is disabled and neutral (line-colour border, muted icon, opacity 1). Its border has at least 3:1 contrast against the composer background. |
+| TYPE-06 | In a creator tab inside a room, set `location.hash` to an empty fragment. Then set it to a fresh `#invite=...&k=...` from another room. | The empty fragment does not reload and the chat stays. The new invite reloads the tab into the guest screen for that invite. |
+| TYPE-07 | Select text and focus an input. | The selection uses the accent tint with readable text and the caret is the accent colour. |
+
 ### Mobile chat shell
 
 Run in a browser at `375x812` and `320x700` with two participants (creator and guest via the invite link). Desktop (above 700px) must look and behave as before.
