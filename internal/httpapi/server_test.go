@@ -779,3 +779,42 @@ func TestWebSocketRefusesCompression(t *testing.T) {
 		}
 	}
 }
+
+func TestAdmissionBudgetsAreIndependent(t *testing.T) {
+	server := New(memory.New())
+	h := server.Handler(web.Handler())
+	post := func(path, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		return w
+	}
+	// Rejected requests still spend the budget: admission precedes any other work.
+	for range createPerMinute {
+		if w := post("/api/v1/rooms", `{}`); w.Code != http.StatusBadRequest {
+			t.Fatalf("create within budget: status %d, want 400", w.Code)
+		}
+	}
+	w := post("/api/v1/rooms", createBody(30))
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), chat.ErrRate.Error()) {
+		t.Fatalf("create over budget: status %d body %s", w.Code, w.Body.String())
+	}
+	if retry := w.Header().Get("Retry-After"); retry == "" || retry == "0" {
+		t.Fatalf("Retry-After = %q", retry)
+	}
+	// An exhausted create budget must not block joining or reconnecting.
+	if w := post("/api/v1/join", `{"invite_token":"x"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("join after create flood: status %d, want 400", w.Code)
+	}
+	ws := httptest.NewRecorder()
+	h.ServeHTTP(ws, httptest.NewRequest(http.MethodGet, "/ws", nil))
+	if ws.Code == http.StatusTooManyRequests {
+		t.Fatal("socket upgrade was rate limited by the create budget")
+	}
+	// The window resets on its own clock.
+	server.mu.Lock()
+	server.createBudget.window = time.Now().Add(-time.Minute)
+	server.mu.Unlock()
+	if w := post("/api/v1/rooms", createBody(30)); w.Code != http.StatusCreated {
+		t.Fatalf("create after window reset: status %d, want 201", w.Code)
+	}
+}

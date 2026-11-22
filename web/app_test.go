@@ -52,6 +52,12 @@ func TestFrontendRetriesTransientWebSocketCloseWithoutDeletingSession(t *testing
 	if !strings.Contains(text, "if (event.code === 1008) { finish") {
 		t.Fatal("permanent WebSocket authentication close no longer finishes the session")
 	}
+	if !strings.Contains(text, "if (state.ended || state.socket !== ws) return;") {
+		t.Fatal("a socket replaced by resync is treated as a lost connection")
+	}
+	if !strings.Contains(text, "if (payload.sequence > state.lastSequence + 1) { resync(); return; }") {
+		t.Fatal("a gap in message sequence does not trigger a resync")
+	}
 	if !strings.Contains(text, "if (event.code === 1013)") {
 		t.Fatal("database-unavailable close is not surfaced as retryable")
 	}

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,10 +31,28 @@ type Server struct {
 	handlers         map[*websocket.Conn]context.CancelFunc
 	handlersDone     sync.WaitGroup
 	closing          bool
-	// Global admission budget bounds unauthenticated work without retaining IPs.
-	budget int
-	window time.Time
+	// Global admission budgets bound unauthenticated work without retaining IPs.
+	// Each kind of work has its own, so a flood of one cannot starve the others:
+	// creating rooms must never block reconnecting to rooms that already exist.
+	createBudget, joinBudget, socketBudget *budget
 }
+
+// budget is a fixed one-minute admission window guarded by Server.mu.
+type budget struct {
+	limit, left int
+	window      time.Time
+}
+
+func newBudget(limit int) *budget {
+	return &budget{limit: limit, left: limit, window: time.Now()}
+}
+
+const (
+	createPerMinute = 30
+	joinPerMinute   = 60
+	// Above the connection limit: after a restart every open socket reconnects at once.
+	socketPerMinute = 480
+)
 
 func New(service Chat) *Server {
 	return NewWithOperationTimeout(service, 0)
@@ -50,8 +70,9 @@ func NewWithOperationTimeout(service Chat, timeout time.Duration) *Server {
 		accept:           websocket.Accept,
 		connections:      make(map[*websocket.Conn]struct{}),
 		handlers:         make(map[*websocket.Conn]context.CancelFunc),
-		budget:           120,
-		window:           time.Now(),
+		createBudget:     newBudget(createPerMinute),
+		joinBudget:       newBudget(joinPerMinute),
+		socketBudget:     newBudget(socketPerMinute),
 	}
 }
 
@@ -180,28 +201,30 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-func (s *Server) admit(w http.ResponseWriter) bool {
+func (s *Server) admit(w http.ResponseWriter, b *budget) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
 		respond(w, 503, map[string]string{"error": "server_shutdown"})
 		return false
 	}
-	if time.Since(s.window) >= time.Minute {
-		s.window = time.Now()
-		s.budget = 120
+	now := time.Now()
+	if now.Sub(b.window) >= time.Minute {
+		b.window = now
+		b.left = b.limit
 	}
-	if s.budget == 0 {
-		w.Header().Set("Retry-After", "60")
+	if b.left == 0 {
+		wait := b.window.Add(time.Minute).Sub(now)
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 		fail(w, chat.ErrRate)
 		return false
 	}
-	s.budget--
+	b.left--
 	return true
 }
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
-	if !s.admit(w) {
+	if !s.admit(w, s.createBudget) {
 		return
 	}
 	input := struct {
@@ -230,7 +253,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) join(w http.ResponseWriter, r *http.Request) {
-	if !s.admit(w) {
+	if !s.admit(w, s.joinBudget) {
 		return
 	}
 	var input struct {
@@ -295,7 +318,7 @@ func writeAndClose(c *websocket.Conn, event chat.Event, status websocket.StatusC
 }
 
 func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
-	if !s.admit(w) {
+	if !s.admit(w, s.socketBudget) {
 		return
 	}
 	s.mu.Lock()

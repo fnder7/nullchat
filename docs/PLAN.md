@@ -19,7 +19,7 @@ Concrete limitations of the current code:
 | `Send` | Ack after the PostgreSQL commit | Outbox for the commit→broadcast gap |
 | `Subscribe` | Full snapshot under the room lock, local subscription with no gap | Paged history and cursor-based stream recovery |
 | `web/app.js`, error handler | A failed message is removed from pending; the text is restored only into an empty input field | Explicit error state and retry without losing text |
-| `httpapi.Server.admit` | One budget for create, join and reconnect | Separate limits with clear client behavior |
+| `httpapi.Server.admit` | Separate global budgets for create, join and socket upgrade | Per-client fairness without retaining IPs; a budget for WS commands |
 | Compose / CI | PostgreSQL 17, migrations, readiness and an isolated test DB are described in Compose; run results are in VERIFICATION | Remote CI not yet verified |
 
 ## Route and checkpoints
@@ -205,7 +205,7 @@ Indexes: `rooms(expires_at)`, `messages(room_id, sequence)`. Message uniqueness:
 ## Step 9. Resilience and public access limits
 
 - [ ] Split the create, join, upgrade and send budgets; under overload return stable codes and a retry delay.
-- [ ] Do not block recovery of already valid sessions with the shared room-creation budget.
+- [x] Do not block recovery of already valid sessions with the shared room-creation budget.
 - [ ] Count all incoming WS commands, including erroneous ones, not only successfully written messages.
 - [ ] Limit memory, connections, queues, history size per request and DB operation time.
 - [ ] Use an explicit list of allowed browser origins; trust forwarded headers only from the configured reverse proxy.

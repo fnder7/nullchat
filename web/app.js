@@ -8,7 +8,7 @@ const state = {
   credentials: null, socket: null, room: null, self: null, invite: '',
   // e2ee: what survives reload in sessionStorage. Keys live in IndexedDB (keystore.js).
   e2ee: null, secrets: null, privateKey: null, messageKey: null, peers: '', keyError: false, title: '',
-  plain: new Map(), flags: new Map(), events: Promise.resolve(), outbox: Promise.resolve(), lastAccepted: 0,
+  plain: new Map(), flags: new Map(), events: Promise.resolve(), outbox: Promise.resolve(), lastAccepted: 0, lastSequence: 0,
   pending: new Map(), failed: new Map(), accepted: new Map(),
   ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0,
 };
@@ -313,6 +313,7 @@ async function handle(ws, data) {
   const { type, payload } = JSON.parse(data);
   if (type === 'snapshot') {
     state.room = payload.room; state.self = payload.self; state.retry = 0;
+    state.lastSequence = state.room.messages.reduce((max, m) => Math.max(max, m.sequence), 0);
     await establishKey();
     await decryptAll();
     for (const m of state.room.messages) {
@@ -325,7 +326,14 @@ async function handle(ws, data) {
     showError('chat-error'); renderParticipants(); renderMessages(); save();
     // Unacknowledged messages go first, in counter order, through the same queue.
     [...state.pending.values()].sort((a, b) => a.counter - b.counter).forEach((m) => enqueue(m, ws));
-  } else if (type === 'message' || type === 'ack') await receiveMessage(payload);
+  } else if (type === 'message') {
+    // Message events follow the snapshot in sequence order with no gaps. A skipped
+    // sequence means a message was stored but its event never reached this tab:
+    // recover the history rather than report it as deleted by the server.
+    if (payload.sequence > state.lastSequence + 1) { resync(); return; }
+    state.lastSequence = Math.max(state.lastSequence, payload.sequence);
+    await receiveMessage(payload);
+  } else if (type === 'ack') await receiveMessage(payload); // may overtake the peer's event; not part of the gap check
   else if (type === 'participants') {
     state.room.participants = payload;
     await establishKey();
@@ -344,7 +352,19 @@ async function handle(ws, data) {
     const failed = state.pending.get(payload.client_message_id);
     if (failed) markFailed(failed, errors[payload.code] || 'The message could not be sent. Press “Retry”.');
     showError('chat-error', errors[payload.code] || 'The message could not be sent.');
+    // The commit may have succeeded even though the server reported a failure. The
+    // snapshot settles it: a stored message leaves the failed list, so "Retry"
+    // cannot send it a second time.
+    if (failed && payload.code === 'database_unavailable') resync();
   }
+}
+// The event stream skipped a message, or a send ended with an unknown outcome:
+// fetch a fresh snapshot instead of guessing what the server stored.
+function resync() {
+  if (state.ended) return;
+  const old = state.socket;
+  connect();
+  old?.close(1000);
 }
 function connect() {
   if (state.ended) return;
@@ -358,7 +378,8 @@ function connect() {
     state.events = state.events.then(() => handle(ws, event.data)).catch(() => showError('chat-error', 'An event could not be processed. Reload the tab.'));
   };
   ws.onclose = (event) => {
-    if (state.ended) return;
+    // A socket replaced by resync() is not a lost connection.
+    if (state.ended || state.socket !== ws) return;
     if (event.code === 1008) { finish('Connection rejected. Open a new room'); return; }
     if (event.code === 1013) showError('chat-error', errors[event.reason] || errors.database_unavailable);
     scheduleReconnect();
@@ -455,8 +476,11 @@ $('messages').addEventListener('click', (event) => {
   if (!button) return;
   const entry = state.failed.get(button.dataset.retryId);
   if (!entry) return;
-  // A failed message was never stored, so it is sealed again with a fresh ID and
-  // counter: resending the old counter after newer messages would look like a replay.
+  // Offline, keep the original ID: the next snapshot may show the message was stored.
+  if (!state.connected) { showError('chat-error', 'No connection. Retry once it is back.'); return; }
+  // A message still failed after a snapshot was not stored, so it is sealed again with
+  // a fresh ID and counter: resending the old counter after newer messages would look
+  // like a replay.
   state.failed.delete(entry.client_message_id);
   entry.client_message_id = crypto.randomUUID();
   entry.ciphertext = '';
