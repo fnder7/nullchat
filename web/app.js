@@ -160,7 +160,7 @@ function renderParticipants() {
     if (p.id === state.self.id) { const tag = document.createElement('small'); tag.textContent = 'you'; li.append(tag); }
     $('participants').append(li);
   }
-  $('participant-count').textContent = `${state.room.participants.length} / 2`;
+  $('participants-status').textContent = state.room.participants.length === 1 && !state.ended ? 'Waiting for your contact' : '';
   renderTrust();
 }
 // The strip above the log. The body is rebuilt only when the derived state changes, so
@@ -380,6 +380,7 @@ function renderMessages() {
   }
   for (const node of [...box.children]) if (!keep.has(node.dataset.key)) node.remove();
   if ([...state.flags.values()].some((f) => f.replay)) showError('chat-error', 'The server replayed or reordered a message. It is hidden.');
+  $('message-count').hidden = !(state.room.messages.length >= 450);
   $('message-count').textContent = `${state.room.messages.length} / 500 messages`;
   box.scrollTop = atBottom ? box.scrollHeight : oldTop;
 }
@@ -470,6 +471,7 @@ function connection(connected, label) {
 function finish(label) {
   state.ended = true;
   $('chat').classList.add('ended');
+  $('participants-status').textContent = '';
   closeSheet({ restoreFocus: false });
   if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);

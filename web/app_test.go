@@ -1081,3 +1081,50 @@ func firstOr(m []string) string {
 	}
 	return m[1]
 }
+
+func TestFrontendSheetParticipantsAndCounter(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+	for _, want := range []string{`<h3 class="participants-title">Participants</h3>`, `<p id="participants-status" class="participants-status" role="status">`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	for _, gone := range []string{`id="participant-count"`, `>YOUR SPACE<`, `>PARTICIPANTS<`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("index.html still has %s", gone)
+		}
+	}
+	rp := funcBody(t, js, "function renderParticipants(")
+	if !strings.Contains(rp, "'Waiting for your contact'") || !strings.Contains(rp, "state.ended") {
+		t.Error("renderParticipants does not set the waiting status only while open")
+	}
+	if strings.Contains(rp, ".focus(") {
+		t.Error("renderParticipants moves focus")
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "$('participants-status').textContent = ''") {
+		t.Error("finish() does not clear the participants status")
+	}
+	rm := funcBody(t, js, "function renderMessages(")
+	if !strings.Contains(rm, ">= 450") || !strings.Contains(rm, "$('message-count').hidden") {
+		t.Error("renderMessages does not hide the counter below 450")
+	}
+	if !regexp.MustCompile(`\.participants-title\s*\{[^}]*font-size:14px;[^}]*font-weight:600`).MatchString(css) {
+		t.Error(".participants-title is not 14px semibold")
+	}
+	if !regexp.MustCompile(`\.participants-status\s*\{[^}]*font-size:13px`).MatchString(css) {
+		t.Error(".participants-status is not 13px")
+	}
+	if strings.Contains(css, ".room-sidebar.open>.eyebrow") || strings.Contains(css, "participants-heading") {
+		t.Error("CSS for the removed eyebrow or old heading remains")
+	}
+	if !regexp.MustCompile(`\.composer-hint \.byte-count\s*\{[^}]*margin-left:auto`).MatchString(css) {
+		t.Error("the byte count does not stay right-aligned when the message counter is hidden")
+	}
+}

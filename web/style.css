@@ -553,16 +553,22 @@ footer>span:first-child {
   transition:width 1s linear;
 }
 
-.participants-heading {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
+.participants-title {
+  font-size:14px;
+  font-weight:600;
+  line-height:1.3;
   margin:28px 0 16px;
+  color:var(--accent);
 }
 
-.participants-heading>span:last-child {
-  font:11px var(--mono);
+.participants-status {
+  font-size:13px;
   color:var(--muted);
+  margin:12px 0 0;
+}
+
+.participants-status:empty {
+  display:none;
 }
 
 .participants {
@@ -1158,9 +1164,6 @@ footer>span:first-child {
   .room-sidebar.open {
     padding-top:20px;
   }
-  .room-sidebar.open>.eyebrow {
-    display:none;
-  }
   .room-sidebar.open #room-title {
     padding-right:44px;
   }
@@ -1268,7 +1271,6 @@ footer>span:first-child {
   #chat .timer-card>span,
   #chat .avatar,
   #chat .participants small,
-  #chat .participants-heading>span:last-child,
   #chat .composer-hint,
   #chat .notify-panel p,
   #chat .message-meta,
