@@ -266,3 +266,195 @@ func TestFrontendNotificationsCarryNoPlaintext(t *testing.T) {
 		t.Error("notifications are not limited to a background tab")
 	}
 }
+
+func TestFrontendEndsChatThroughDialog(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, "confirm(") {
+		t.Error("app.js still uses confirm()")
+	}
+	if !strings.Contains(string(html), `<dialog id="end-dialog"`) {
+		t.Error("index.html has no end dialog")
+	}
+	page := string(html)
+	chatStart := strings.Index(page, `<main id="chat"`)
+	dialog := strings.Index(page, `<dialog id="end-dialog"`)
+	chatEnd := chatStart + strings.Index(page[chatStart:], "</main>")
+	if chatStart < 0 || dialog < chatStart || dialog > chatEnd {
+		t.Error("end dialog is not inside <main id=\"chat\">")
+	}
+	if !strings.Contains(page, `<button id="end-cancel" class="secondary" type="button" autofocus>`) {
+		t.Error("end-cancel button lacks autofocus")
+	}
+	for _, want := range []string{"function openEndDialog(", ".showModal()"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+	body := text[strings.Index(text, "function finish("):]
+	body = body[:strings.Index(body, "\n}\n")]
+	if !strings.Contains(body, "$('end-dialog').close()") {
+		t.Error("finish() does not close the end dialog")
+	}
+	for _, copy := range []string{
+		"End the conversation? The room and its history will be gone for both of you.",
+		"The codes don't match. The person on the other end may not be your contact. End the conversation for both?",
+		"Key verification failed, so this conversation is not safe. End it for both?",
+	} {
+		if !strings.Contains(text, copy) {
+			t.Errorf("END_COPY lacks %q", copy)
+		}
+	}
+}
+
+func TestFrontendInviteLivesInTrustStrip(t *testing.T) {
+	htmlBytes, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(htmlBytes)
+	for _, want := range []string{`id="trust-strip"`, `id="trust-title" tabindex="-1"`, `id="trust-badge"`, `aria-controls="trust-strip"`, `id="trust-status" class="sr-only" role="status"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	if strings.Contains(page, `id="share-panel"`) {
+		t.Error("index.html still has the share panel")
+	}
+	strip := strings.Index(page, `id="trust-strip"`)
+	wrap := strings.Index(page, `class="messages-wrap"`)
+	wrapEnd := wrap + strings.Index(page[wrap:], `id="chat-error"`)
+	if strip >= wrap && strip < wrapEnd {
+		t.Error("trust strip is inside the messages wrapper")
+	}
+	js, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(js)
+	for _, want := range []string{"from './trust.js'", "navigator.share", "navigator.clipboard.writeText",
+		"Send this link to your contact",
+		"Anyone who opens this link takes the seat. Send it somewhere private.",
+		"Send the password separately.",
+		"The invite was revoked after 5 wrong password attempts. End the chat and create a new room.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("app.js lacks %q", want)
+		}
+	}
+	branch := text[strings.Index(text, "type === 'invite_revoked'"):]
+	branch = branch[:strings.Index(branch, "\n")+200]
+	branch = branch[:strings.Index(branch, "room_expired")]
+	if strings.Contains(branch, "showError('chat-error'") {
+		t.Error("invite_revoked still reports through chat-error")
+	}
+}
+
+func funcBody(t *testing.T, text, name string) string {
+	t.Helper()
+	i := strings.Index(text, name)
+	if i < 0 {
+		t.Fatalf("app.js lacks %s", name)
+	}
+	body := text[i:]
+	return body[:strings.Index(body, "\n}\n")]
+}
+
+func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {
+	js, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	htmlBytes, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, page := string(js), string(htmlBytes)
+
+	set := funcBody(t, text, "function setVerified(")
+	if !strings.Contains(set, "state.e2ee.verified") || !strings.Contains(set, "save()") {
+		t.Error("setVerified does not persist state.e2ee.verified through save()")
+	}
+	if strings.Contains(funcBody(t, text, "function openEndDialog("), "setVerified") {
+		t.Error("openEndDialog must not mark anything verified")
+	}
+	for _, want := range []string{"openEndDialog('mismatch'", "openEndDialog('broken'"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+	// The mismatch handler may only open the dialog: cancelling must leave verified unset.
+	m := text[strings.Index(text, "openEndDialog('mismatch'"):]
+	m = m[:strings.Index(m, "\n")]
+	if strings.Contains(m, "setVerified") {
+		t.Error("the mismatch handler sets verified")
+	}
+
+	render := funcBody(t, text, "function renderTrust(")
+	for _, want := range []string{"contains(document.activeElement)", "$('trust-title').focus()",
+		"!state.safetyCode", "Your contact joined. Compare the safety code."} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderTrust lacks %s", want)
+		}
+	}
+	// Transient hidden: two people but no code yet keeps whatever is shown, so the strip
+	// goes straight from invite to verify and the focus rule fires once.
+	guard := regexp.MustCompile(`(?s)!state\.ended && !state\.keyError && state\.room\.participants\.length > 1 && !state\.safetyCode\) return`)
+	if !guard.MatchString(render) {
+		t.Error("renderTrust does not keep the current strip while the code is being derived")
+	}
+
+	if !strings.Contains(text, "setAttribute('aria-label', codeLabel(") {
+		t.Error("the safety code has no aria-label from codeLabel")
+	}
+	for _, gone := range []string{"safety-code", "safety-note"} {
+		if strings.Contains(text, gone) || strings.Contains(page, gone) {
+			t.Errorf("%s is still referenced", gone)
+		}
+	}
+	if !strings.Contains(text, "const KEY_NOTE") || strings.Count(text, "KEY_NOTE") < 3 {
+		t.Error("the key failure note is not one shared constant")
+	}
+	alert := `<p id="safety-alert" class="sr-only" role="alert"></p>`
+	strip := page[strings.Index(page, `id="trust-strip"`):]
+	strip = strip[:strings.Index(strip, "</section>")]
+	if !strings.Contains(strip, alert) {
+		t.Error("the key failure alert is not inside the trust strip")
+	}
+	status := `<p id="trust-status" class="sr-only" role="status"></p>`
+	head := page[strings.Index(page, `class="conversation-head"`):]
+	head = head[:strings.Index(head, `id="trust-strip"`)]
+	if strings.Contains(strip, status) || !strings.Contains(head, status) {
+		t.Error("#trust-status must sit in .conversation-head, outside the strip that collapses")
+	}
+	if !strings.Contains(text, "trustButton('It matches', 'primary trust-primary'") {
+		t.Error("It matches is not the primary button")
+	}
+	if strings.Contains(funcBody(t, text, "function buildVerified("), "state.trustOpen = true") {
+		t.Error("Compare again leaves trustOpen stuck")
+	}
+	if !strings.Contains(page, `<section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><p>End-to-end encrypted in your browser.</p></section>`) {
+		t.Error("the sidebar encryption note is wrong")
+	}
+
+	for _, copy := range []string{"Is this really them?", "Compare this code with your contact by voice or in another app. If it matches, you are talking to the right person.",
+		"It matches", "It doesn't match", "Later", "You confirmed this code matches.", "Compare again", "Hide",
+		"Key verification failed", "End the chat", "Marked as verified."} {
+		if !strings.Contains(text, copy) {
+			t.Errorf("app.js lacks %q", copy)
+		}
+	}
+	if regexp.MustCompile(`(send|transmit)\([^)]*verified`).MatchString(text) {
+		t.Error("verification is sent over the wire")
+	}
+	if strings.Contains(text, "if (e.name !== 'AbortError') throw e") {
+		t.Error("Share rethrows non-abort errors")
+	}
+}

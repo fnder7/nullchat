@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-//go:embed index.html app.js crypto.js keystore.js linkify.js style.css favicon.svg
+//go:embed index.html app.js crypto.js keystore.js linkify.js style.css trust.js favicon.svg
 var assets embed.FS
 
 func Handler() http.Handler { return http.FileServer(http.FS(assets)) }
