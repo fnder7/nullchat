@@ -3,6 +3,7 @@ package web
 import (
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1030,4 +1031,53 @@ func TestFrontendSentCheckAndSameTabLinks(t *testing.T) {
 	if strings.Contains(body, "dataset.group += `|${time.textContent}`") == false {
 		t.Error("the sent check must not change the grouping key")
 	}
+}
+
+func TestFrontendSheetNotificationsAndEnd(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+	if strings.Contains(html, `class="sidebar-note"`) {
+		t.Error("the reload note is still in index.html")
+	}
+	if !strings.Contains(html, `<button id="end-button" class="danger end-button" type="button">End the chat for both</button>`) {
+		t.Error("End is not a danger end-button")
+	}
+	rn := funcBody(t, js, "function renderNotify(")
+	for _, want := range []string{"'Notifications are blocked in this browser.'", "$('notify-button').hidden ="} {
+		if !strings.Contains(rn, want) {
+			t.Errorf("renderNotify lacks %s", want)
+		}
+	}
+	if strings.Contains(rn, ".disabled = denied") {
+		t.Error("renderNotify still disables the button when denied")
+	}
+	if !regexp.MustCompile(`\.end-button\s*\{[^}]*width:100%`).MatchString(css) {
+		t.Error(".end-button is not full width")
+	}
+	mt := regexp.MustCompile(`\.end-button\s*\{[^}]*margin-top:(\d+)px`).FindStringSubmatch(css)
+	if n, _ := strconv.Atoi(firstOr(mt)); n < 24 {
+		t.Error(".end-button margin-top is under 24px")
+	}
+	if strings.Contains(css, ".danger-link") || strings.Contains(css, ".sidebar-note") {
+		t.Error("unused .danger-link / .sidebar-note CSS remains")
+	}
+	if regexp.MustCompile(`\.notify-panel[^{]*:disabled`).MatchString(css) {
+		t.Error(".notify-panel still styles a disabled button")
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "$('end-button').hidden = true") {
+		t.Error("finish() no longer hides end-button")
+	}
+}
+
+func firstOr(m []string) string {
+	if len(m) < 2 {
+		return "0"
+	}
+	return m[1]
 }

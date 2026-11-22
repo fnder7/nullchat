@@ -426,14 +426,12 @@ const NOTIFY_KEY = 'nullchat:notify';
 const notifySupported = () => 'Notification' in globalThis;
 const notifyOn = () => notifySupported() && Notification.permission === 'granted' && sessionStorage.getItem(NOTIFY_KEY) === '1';
 function renderNotify() {
-  $('notify-panel').hidden = !notifySupported() || state.ended;
-  if (!notifySupported()) return;
-  const denied = Notification.permission === 'denied';
-  $('notify-button').disabled = denied;
-  $('notify-button').textContent = denied ? 'Notifications are blocked' : notifyOn() ? 'Turn off notifications' : 'Turn on notifications';
-  $('notify-note').textContent = denied
-    ? 'Allow notifications for this site in the browser settings.'
-    : 'Shown only while this tab is in the background, without the message text.';
+  $('notify-panel').hidden = state.ended;
+  const blocked = !notifySupported() || Notification.permission === 'denied';
+  $('notify-button').hidden = blocked;
+  if (blocked) { $('notify-note').textContent = 'Notifications are blocked in this browser.'; return; }
+  $('notify-button').textContent = notifyOn() ? 'Turn off notifications' : 'Turn on notifications';
+  $('notify-note').textContent = 'Shown only while this tab is in the background, without the message text.';
 }
 function notify(body) {
   if (!notifyOn()) return;

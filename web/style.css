@@ -674,12 +674,6 @@ footer>span:first-child {
 .trust-badge[data-tone="warn"] { color:var(--text); }
 .trust-badge[data-tone="danger"] { color:var(--error); }
 
-.sidebar-note {
-  font-size:11px;
-  line-height:1.8;
-  color:var(--muted);
-}
-
 .secondary {
   background:transparent;
   border:1px solid #455139;
@@ -690,16 +684,12 @@ footer>span:first-child {
   font-size:11px;
 }
 
-.sidebar-note {
+.end-button {
+  width:100%;
   margin-top:24px;
-}
-
-.danger-link {
-  background:transparent;
-  border:0;
-  padding:10px 0;
-  color:#c4a99e;
-  font-size:11px;
+  min-height:44px;
+  padding:11px;
+  font-size:12px;
 }
 
 .conversation {
@@ -1280,14 +1270,13 @@ footer>span:first-child {
   #chat .participants small,
   #chat .participants-heading>span:last-child,
   #chat .composer-hint,
-  #chat .sidebar-note,
   #chat .notify-panel p,
   #chat .message-meta,
   #chat .message-actions,
   #chat .message-note,
   #chat .jump-button,
   #chat .secondary,
-  #chat .danger-link {
+  #chat .end-button {
     font-size:12px;
   }
   /* Fields at 16px: iOS Safari zooms the page into any smaller field on focus. */
