@@ -121,8 +121,16 @@ func (s *Server) Handler(frontend http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		// no-transform: CDNs in front of the service (Render's edge) must not
-		// compress responses that carry session and invite tokens.
-		w.Header().Set("Cache-Control", "no-store, no-transform")
+		// compress responses that carry session and invite tokens. no-store keeps
+		// pages and scripts fresh, so a browser runs the code this server serves now.
+		// The self-hosted fonts are the one exception: static, token-free and heavy
+		// enough (~70 KB) that refetching them on every load is wasteful. 30 days, not
+		// immutable, because the file names carry no version.
+		if isFontFile(r.URL.Path) {
+			w.Header().Set("Cache-Control", "public, max-age=2592000, no-transform")
+		} else {
+			w.Header().Set("Cache-Control", "no-store, no-transform")
+		}
 		// Trusted Types with no policies: string-to-HTML/script sinks are blocked outright.
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'")
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
@@ -134,6 +142,23 @@ func (s *Server) Handler(frontend http.Handler) http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// isFontFile matches the embedded woff2 files exactly: one path segment under /fonts/,
+// lowercase name, no dots other than the extension, so "..", directory listings and the
+// licence texts stay no-store.
+func isFontFile(path string) bool {
+	name, ok := strings.CutPrefix(path, "/fonts/")
+	base, isWoff2 := strings.CutSuffix(name, ".woff2")
+	if !ok || !isWoff2 || base == "" {
+		return false
+	}
+	for _, c := range base {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func sameOrigin(r *http.Request) bool {
