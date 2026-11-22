@@ -3,6 +3,7 @@ package web
 import (
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1022,12 +1023,192 @@ func TestFrontendSentCheckAndSameTabLinks(t *testing.T) {
 		}
 	}
 	body := funcBody(t, app, "function buildMessage")
-	for _, want := range []string{`self && status === 'accepted'`, `createElementNS('http://www.w3.org/2000/svg'`, `'aria-label', 'Sent'`, "article.dataset.key = `${message.sender_id}:${message.client_message_id}`;"} {
+	for _, want := range []string{`self && status === 'accepted'`, `createElementNS('http://www.w3.org/2000/svg'`, `'aria-hidden', 'true'`, `sr.className = 'sr-only'; sr.textContent = 'Sent'`, "article.dataset.key = `${message.sender_id}:${message.client_message_id}`;"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("buildMessage lacks %s", want)
 		}
 	}
+	if strings.Contains(body, "'aria-label'") || strings.Contains(body, "'role'") {
+		t.Error("the sent check icon must be hidden from assistive tech, not labelled")
+	}
 	if strings.Contains(body, "dataset.group += `|${time.textContent}`") == false {
 		t.Error("the sent check must not change the grouping key")
+	}
+}
+
+func TestFrontendSheetNotificationsAndEnd(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+	if strings.Contains(html, `class="sidebar-note"`) {
+		t.Error("the reload note is still in index.html")
+	}
+	if !strings.Contains(html, `<button id="end-button" class="danger end-button" type="button">End the chat for both</button>`) {
+		t.Error("End is not a danger end-button")
+	}
+	rn := funcBody(t, js, "function renderNotify(")
+	for _, want := range []string{"'Notifications are blocked in this browser.'", "$('notify-button').hidden ="} {
+		if !strings.Contains(rn, want) {
+			t.Errorf("renderNotify lacks %s", want)
+		}
+	}
+	if strings.Contains(rn, ".disabled = denied") {
+		t.Error("renderNotify still disables the button when denied")
+	}
+	if !regexp.MustCompile(`\.end-button\s*\{[^}]*width:100%`).MatchString(css) {
+		t.Error(".end-button is not full width")
+	}
+	mt := regexp.MustCompile(`\.end-button\s*\{[^}]*margin-top:(\d+)px`).FindStringSubmatch(css)
+	if n, _ := strconv.Atoi(firstOr(mt)); n < 24 {
+		t.Error(".end-button margin-top is under 24px")
+	}
+	if strings.Contains(css, ".danger-link") || strings.Contains(css, ".sidebar-note") {
+		t.Error("unused .danger-link / .sidebar-note CSS remains")
+	}
+	if regexp.MustCompile(`\.notify-panel[^{]*:disabled`).MatchString(css) {
+		t.Error(".notify-panel still styles a disabled button")
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "$('end-button').hidden = true") {
+		t.Error("finish() no longer hides end-button")
+	}
+}
+
+func firstOr(m []string) string {
+	if len(m) < 2 {
+		return "0"
+	}
+	return m[1]
+}
+
+func TestFrontendSheetParticipantsAndCounter(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+	for _, want := range []string{`<h3 class="participants-title">Participants</h3>`, `<p id="participants-status" class="participants-status" role="status">`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	for _, gone := range []string{`id="participant-count"`, `>YOUR SPACE<`, `>PARTICIPANTS<`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("index.html still has %s", gone)
+		}
+	}
+	rp := funcBody(t, js, "function renderParticipants(")
+	if !strings.Contains(rp, "'Waiting for your contact'") || !strings.Contains(rp, "state.ended") {
+		t.Error("renderParticipants does not set the waiting status only while open")
+	}
+	if !strings.Contains(rp, "$('participants-status').textContent !== status") {
+		t.Error("renderParticipants rewrites the status even when unchanged")
+	}
+	if !regexp.MustCompile(`\.participants-title\s*\{[^}]*color:var\(--text\)`).MatchString(css) {
+		t.Error(".participants-title is not the default text colour")
+	}
+	if strings.Contains(rp, ".focus(") {
+		t.Error("renderParticipants moves focus")
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "$('participants-status').textContent = ''") {
+		t.Error("finish() does not clear the participants status")
+	}
+	rm := funcBody(t, js, "function renderMessages(")
+	if !strings.Contains(rm, ">= 450") || !strings.Contains(rm, "$('message-count').hidden") {
+		t.Error("renderMessages does not hide the counter below 450")
+	}
+	if !regexp.MustCompile(`\.participants-title\s*\{[^}]*font-size:14px;[^}]*font-weight:600`).MatchString(css) {
+		t.Error(".participants-title is not 14px semibold")
+	}
+	if !regexp.MustCompile(`\.participants-status\s*\{[^}]*font-size:13px`).MatchString(css) {
+		t.Error(".participants-status is not 13px")
+	}
+	if strings.Contains(css, ".room-sidebar.open>.eyebrow") || strings.Contains(css, "participants-heading") {
+		t.Error("CSS for the removed eyebrow or old heading remains")
+	}
+	if !regexp.MustCompile(`\.composer-hint \.byte-count\s*\{[^}]*margin-left:auto`).MatchString(css) {
+		t.Error("the byte count does not stay right-aligned when the message counter is hidden")
+	}
+	if !regexp.MustCompile(`#message-count\s*\{[^}]*color:var\(--muted\)`).MatchString(css) {
+		t.Error("#message-count does not use the muted colour of the byte count")
+	}
+}
+
+// smallFontRules returns the selector of every rule, media blocks included,
+// whose font-size or font shorthand sets a size below 12px.
+func smallFontRules(css string) []string {
+	css = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")
+	size := regexp.MustCompile(`(?:^|[;\s])font(?:-size)?\s*:\s*[^;}]*?(\d+(?:\.\d+)?)px`)
+	var out []string
+	var walk func(s string)
+	walk = func(s string) {
+		for {
+			open := strings.Index(s, "{")
+			if open < 0 {
+				return
+			}
+			selector := strings.Join(strings.Fields(s[:open]), " ")
+			depth, end := 0, -1
+			for j := open; j < len(s); j++ {
+				if s[j] == '{' {
+					depth++
+				} else if s[j] == '}' {
+					depth--
+					if depth == 0 {
+						end = j
+						break
+					}
+				}
+			}
+			if end < 0 {
+				return
+			}
+			body := s[open+1 : end]
+			if strings.HasPrefix(selector, "@") {
+				walk(body)
+			} else {
+				for _, m := range size.FindAllStringSubmatch(body, -1) {
+					if px, err := strconv.ParseFloat(m[1], 64); err == nil && px < 12 {
+						out = append(out, selector)
+						break
+					}
+				}
+			}
+			s = s[end+1:]
+		}
+	}
+	walk(css)
+	return out
+}
+
+func TestFrontendNoSmallTextOutsideHome(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Home and footer selectors only; nothing on the chat screen or the sidebar.
+	homeOnly := map[string]bool{
+		".eyebrow":       true,
+		".flow span":     true,
+		".flow b":        true,
+		".small-print":   true,
+		"label span":     true,
+		".room-facts":    true,
+		".card-footnote": true,
+		".principle-num": true,
+		".principles p":  true,
+		"footer":         true,
+	}
+	for _, selector := range smallFontRules(string(css)) {
+		if !homeOnly[selector] {
+			t.Errorf("%s sets text below 12px outside the home page", selector)
+		}
 	}
 }

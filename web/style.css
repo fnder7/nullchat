@@ -527,7 +527,7 @@ footer>span:first-child {
 }
 
 .timer-card>span {
-  font-size:11px;
+  font-size:12px;
   color:var(--muted);
 }
 
@@ -553,16 +553,22 @@ footer>span:first-child {
   transition:width 1s linear;
 }
 
-.participants-heading {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
+.participants-title {
+  font-size:14px;
+  font-weight:600;
+  line-height:1.3;
   margin:28px 0 16px;
+  color:var(--text);
 }
 
-.participants-heading>span:last-child {
-  font:11px var(--mono);
+.participants-status {
+  font-size:13px;
   color:var(--muted);
+  margin:12px 0 0;
+}
+
+.participants-status:empty {
+  display:none;
 }
 
 .participants {
@@ -593,7 +599,7 @@ footer>span:first-child {
 }
 
 .participants small {
-  font-size:10px;
+  font-size:12px;
   color:var(--muted);
   margin-left:auto;
 }
@@ -674,12 +680,6 @@ footer>span:first-child {
 .trust-badge[data-tone="warn"] { color:var(--text); }
 .trust-badge[data-tone="danger"] { color:var(--error); }
 
-.sidebar-note {
-  font-size:11px;
-  line-height:1.8;
-  color:var(--muted);
-}
-
 .secondary {
   background:transparent;
   border:1px solid #455139;
@@ -687,19 +687,15 @@ footer>span:first-child {
   color:var(--accent);
   padding:11px;
   width:100%;
-  font-size:11px;
+  font-size:12px;
 }
 
-.sidebar-note {
+.end-button {
+  width:100%;
   margin-top:24px;
-}
-
-.danger-link {
-  background:transparent;
-  border:0;
-  padding:10px 0;
-  color:#c4a99e;
-  font-size:11px;
+  min-height:44px;
+  padding:11px;
+  font-size:12px;
 }
 
 .conversation {
@@ -721,7 +717,7 @@ footer>span:first-child {
   align-items:center;
   justify-content:space-between;
   gap:10px;
-  font-size:11px;
+  font-size:12px;
   color:var(--muted);
 }
 
@@ -740,12 +736,12 @@ footer>span:first-child {
   border-radius:5px;
   background:transparent;
   color:var(--accent);
-  font-size:10px;
+  font-size:12px;
   padding:6px 9px;
 }
 
 .conversation-label {
-  font:9px var(--mono);
+  font:12px var(--mono);
   letter-spacing:1px;
 }
 
@@ -809,7 +805,7 @@ footer>span:first-child {
 }
 
 .message-meta {
-  font-size:10px;
+  font-size:12px;
   color:var(--muted);
   margin-bottom:6px;
   display:flex;
@@ -865,7 +861,7 @@ footer>span:first-child {
   gap:10px;
   margin-top:6px;
   color:var(--error);
-  font-size:10px;
+  font-size:12px;
 }
 
 .message-actions .retry-message {
@@ -928,7 +924,7 @@ footer>span:first-child {
   justify-content:space-between;
   gap:10px;
   padding:11px 22px 16px;
-  font-size:9px;
+  font-size:12px;
   color:#7a8674;
 }
 
@@ -1168,9 +1164,6 @@ footer>span:first-child {
   .room-sidebar.open {
     padding-top:20px;
   }
-  .room-sidebar.open>.eyebrow {
-    display:none;
-  }
   .room-sidebar.open #room-title {
     padding-right:44px;
   }
@@ -1267,9 +1260,6 @@ footer>span:first-child {
     max-height:40%;
     overflow-y:auto;
   }
-  #chat .eyebrow {
-    font-size:12px;
-  }
   /* Text floor: nothing on the chat screen is below 12px. */
   #chat .conversation-label,
   #chat .conversation-head,
@@ -1278,16 +1268,14 @@ footer>span:first-child {
   #chat .timer-card>span,
   #chat .avatar,
   #chat .participants small,
-  #chat .participants-heading>span:last-child,
   #chat .composer-hint,
-  #chat .sidebar-note,
   #chat .notify-panel p,
   #chat .message-meta,
   #chat .message-actions,
   #chat .message-note,
   #chat .jump-button,
   #chat .secondary,
-  #chat .danger-link {
+  #chat .end-button {
     font-size:12px;
   }
   /* Fields at 16px: iOS Safari zooms the page into any smaller field on focus. */
@@ -1367,7 +1355,7 @@ footer>span:first-child {
 
 .message-note {
   margin:4px 0 0;
-  font-size:10px;
+  font-size:12px;
   color:var(--error);
 }
 
@@ -1412,7 +1400,7 @@ footer>span:first-child {
   border-radius:999px;
   background:#1d241d;
   color:var(--accent);
-  font-size:11px;
+  font-size:12px;
   padding:8px 14px;
   box-shadow:0 6px 24px #0007;
 }
@@ -1428,6 +1416,10 @@ footer>span:first-child {
 
 .composer-hint .byte-count.over {
   color:var(--error);
+}
+
+#message-count {
+  color:var(--muted);
 }
 
 .timer-card.ending strong {
@@ -1450,7 +1442,7 @@ footer>span:first-child {
 
 .notify-panel p {
   margin:8px 0 0;
-  font-size:11px;
+  font-size:12px;
   line-height:1.7;
   color:var(--muted);
 }

@@ -160,7 +160,8 @@ function renderParticipants() {
     if (p.id === state.self.id) { const tag = document.createElement('small'); tag.textContent = 'you'; li.append(tag); }
     $('participants').append(li);
   }
-  $('participant-count').textContent = `${state.room.participants.length} / 2`;
+  const status = state.room.participants.length === 1 && !state.ended ? 'Waiting for your contact' : '';
+  if ($('participants-status').textContent !== status) $('participants-status').textContent = status; // a rewrite may be re-announced
   renderTrust();
 }
 // The strip above the log. The body is rebuilt only when the derived state changes, so
@@ -292,9 +293,11 @@ function buildMessage(message, pending = false) {
   meta.append(name, time);
   if (self && status === 'accepted') {
     const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    check.setAttribute('class', 'sent-check'); check.setAttribute('viewBox', '0 0 12 12'); check.setAttribute('role', 'img'); check.setAttribute('aria-label', 'Sent');
+    check.setAttribute('class', 'sent-check'); check.setAttribute('viewBox', '0 0 12 12'); check.setAttribute('aria-hidden', 'true');
     const tick = document.createElementNS('http://www.w3.org/2000/svg', 'path'); tick.setAttribute('d', 'M2 6.5l2.5 2.5L10 3.5');
-    check.append(tick); meta.append(check);
+    check.append(tick);
+    const sr = document.createElement('span'); sr.className = 'sr-only'; sr.textContent = 'Sent';
+    meta.append(check, sr);
   }
   article.dataset.group += `|${time.textContent}`;
   const bubble = document.createElement('div'); bubble.className = 'bubble';
@@ -380,6 +383,7 @@ function renderMessages() {
   }
   for (const node of [...box.children]) if (!keep.has(node.dataset.key)) node.remove();
   if ([...state.flags.values()].some((f) => f.replay)) showError('chat-error', 'The server replayed or reordered a message. It is hidden.');
+  $('message-count').hidden = !(state.room.messages.length >= 450);
   $('message-count').textContent = `${state.room.messages.length} / 500 messages`;
   box.scrollTop = atBottom ? box.scrollHeight : oldTop;
 }
@@ -426,14 +430,12 @@ const NOTIFY_KEY = 'nullchat:notify';
 const notifySupported = () => 'Notification' in globalThis;
 const notifyOn = () => notifySupported() && Notification.permission === 'granted' && sessionStorage.getItem(NOTIFY_KEY) === '1';
 function renderNotify() {
-  $('notify-panel').hidden = !notifySupported() || state.ended;
-  if (!notifySupported()) return;
-  const denied = Notification.permission === 'denied';
-  $('notify-button').disabled = denied;
-  $('notify-button').textContent = denied ? 'Notifications are blocked' : notifyOn() ? 'Turn off notifications' : 'Turn on notifications';
-  $('notify-note').textContent = denied
-    ? 'Allow notifications for this site in the browser settings.'
-    : 'Shown only while this tab is in the background, without the message text.';
+  $('notify-panel').hidden = state.ended;
+  const blocked = !notifySupported() || Notification.permission === 'denied';
+  $('notify-button').hidden = blocked;
+  if (blocked) { $('notify-note').textContent = 'Notifications are blocked in this browser.'; return; }
+  $('notify-button').textContent = notifyOn() ? 'Turn off notifications' : 'Turn on notifications';
+  $('notify-note').textContent = 'Shown only while this tab is in the background, without the message text.';
 }
 function notify(body) {
   if (!notifyOn()) return;
@@ -472,6 +474,7 @@ function connection(connected, label) {
 function finish(label) {
   state.ended = true;
   $('chat').classList.add('ended');
+  if ($('participants-status').textContent) $('participants-status').textContent = '';
   closeSheet({ restoreFocus: false });
   if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);

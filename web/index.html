@@ -64,14 +64,14 @@
       <p id="timer-alert" class="sr-only" role="status"></p>
       <aside id="room-sheet" class="room-sidebar">
         <button id="sheet-close" type="button" aria-label="Close">×</button>
-        <p class="eyebrow">YOUR SPACE</p><h2 id="room-title" tabindex="-1">Quiet conversation</h2>
+        <h2 id="room-title" tabindex="-1">Quiet conversation</h2>
         <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div></div>
-        <div class="participants-heading"><span class="eyebrow">PARTICIPANTS</span><span id="participant-count">1 / 2</span></div>
+        <h3 class="participants-title">Participants</h3>
         <ul id="participants" class="participants"></ul>
+        <p id="participants-status" class="participants-status" role="status"></p>
         <section id="safety-panel" class="safety-panel"><svg class="safety-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2"/></svg><strong>End-to-end encrypted</strong><p>Messages are locked in this browser before they are sent. The server only sees ciphertext.</p><p class="safety-spec">AES-256-GCM · ECDH P-256</p></section>
         <section id="notify-panel" class="notify-panel" hidden><button id="notify-button" class="secondary" type="button">Turn on notifications</button><p id="notify-note"></p></section>
-        <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
-        <button id="end-button" class="danger-link" type="button">End the chat for both</button>
+        <button id="end-button" class="danger end-button" type="button">End the chat for both</button>
       </aside>
       <div id="sheet-backdrop" hidden></div>
       <section class="conversation" aria-label="Conversation">
@@ -80,7 +80,7 @@
         <div class="messages-wrap"><div id="messages" class="messages" role="log" aria-label="Messages" aria-live="polite" tabindex="0"></div><button id="jump-button" class="jump-button" type="button" hidden></button></div>
         <p id="chat-error" class="error chat-error" role="alert" hidden></p>
         <form id="message-form" class="composer"><label for="message" class="sr-only">Message</label><textarea id="message" rows="1" maxlength="4000" placeholder="What's on your mind?" disabled></textarea><button id="send-button" class="send-button" aria-label="Send message" type="submit" disabled>↑</button></form>
-        <div class="composer-hint"><span>Enter to send · Shift + Enter for a new line</span><span id="byte-count" class="byte-count" aria-live="polite" hidden></span><span id="message-count">0 / 500 messages</span></div>
+        <div class="composer-hint"><span>Enter to send · Shift + Enter for a new line</span><span id="byte-count" class="byte-count" aria-live="polite" hidden></span><span id="message-count" hidden>0 / 500 messages</span></div>
         <div id="ended-panel" class="ended-panel" hidden><h3 id="ended-title" tabindex="-1">Conversation ended</h3><p>This room is no longer available.</p><a class="primary" href="/">Start a new conversation</a></div>
       </section>
       <dialog id="end-dialog" aria-labelledby="end-dialog-text"><p id="end-dialog-text"></p><div class="dialog-actions"><button id="end-confirm" class="danger" type="button">End for both</button><button id="end-cancel" class="secondary" type="button" autofocus>Cancel</button></div></dialog>
