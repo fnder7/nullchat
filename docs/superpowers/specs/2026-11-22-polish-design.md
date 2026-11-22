@@ -84,7 +84,7 @@ Placement and semantics:
    - Remove the eyebrow labels "A PRIVATE SPACE, FOR A WHILE" and "NEW CONVERSATION", and the `/ 01 / 02 / 03` numbers on the principles.
    - The 01/02/03 flow keeps its numbers, because they are a sequence.
    - Raise every remaining text to at least 12px: room facts, principle text, the flow and the footer.
-3. **Footer.** Remove the "Server status" link to raw `/healthz` JSON, and the third repetition of "End-to-end encrypted". The footer keeps "nullchat © 2026" and one sentence on history: "History lasts only until the room closes."
+3. **Footer.** Remove the "Server status" link to raw `/healthz` JSON, and the third repetition of "End-to-end encrypted". The footer keeps "nullchat © 2026" and one sentence on history: "History is available to participants until the room closes." (corrected in review: the earlier wording implied deletion, which SPEC.md does not promise)
 4. **Default title.** An empty title no longer silently becomes the placeholder.
    - The input placeholder becomes "e.g. Weekend plans".
    - The default title shown in the room becomes "Private conversation". *(Builder call: the user asked to fix the confusion, not for specific copy.)*

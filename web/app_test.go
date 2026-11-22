@@ -108,7 +108,7 @@ func TestFrontendCopyMatchesPersistenceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "History lasts only until the room closes.") {
+	if !strings.Contains(text, "History is available to participants until the room closes.") {
 		t.Fatal("footer does not describe the persistence contract")
 	}
 	if strings.Contains(text, "No E2EE") {
@@ -1271,7 +1271,7 @@ func TestFrontendFooterAndDefaultTitle(t *testing.T) {
 	if strings.Contains(html, "/healthz") {
 		t.Error("footer still links to /healthz")
 	}
-	if !strings.Contains(html, "History lasts only until the room closes.") {
+	if !strings.Contains(html, "History is available to participants until the room closes.") {
 		t.Error("footer lacks the honest history line")
 	}
 	start := strings.Index(html, "<footer")
