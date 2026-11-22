@@ -1,13 +1,14 @@
 import * as e2ee from './crypto.js';
 import * as keystore from './keystore.js';
 import { linkify } from './linkify.js';
+import { linkState, joinOutcome } from './invite.js';
 import { trustState, badge, collapsible, inviteURL, codeLabel } from './trust.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_RECONNECT_ATTEMPTS = 8;
 const DEFAULT_TITLE = 'Quiet conversation';
 const state = {
-  credentials: null, socket: null, room: null, self: null, invite: '',
+  credentials: null, socket: null, room: null, self: null, invite: '', inviteShown: '',
   // e2ee: what survives reload in sessionStorage. Keys live in IndexedDB (keystore.js).
   e2ee: null, secrets: null, privateKey: null, messageKey: null, peers: '', keyError: false, title: '',
   plain: new Map(), flags: new Map(), events: Promise.resolve(), outbox: Promise.resolve(), lastAccepted: 0, lastSequence: 0,
@@ -44,7 +45,11 @@ async function api(path, data, token, key = '', errorOverrides = {}) {
   const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
   const response = await fetch(path, { method: 'POST', headers, body: JSON.stringify(data), signal: AbortSignal.timeout(10000) });
   const result = await response.json();
-  if (!response.ok) throw new Error(errorOverrides[result.error] || errors[result.error] || 'The request failed. Please try again.');
+  if (!response.ok) {
+    const err = new Error(errorOverrides[result.error] || errors[result.error] || 'The request failed. Please try again.');
+    err.code = result.error;
+    throw err;
+  }
   return result;
 }
 function checkStorage() {
@@ -83,6 +88,7 @@ async function enter(credentials, fresh = null) {
   save();
   history.replaceState(null, '', `/#room=${state.room.id}`);
   $('home').hidden = true;
+  $('invite').hidden = true;
   $('chat').hidden = false;
   $('room-title').textContent = state.title;
   // The control that had focus is hidden now; without this, focus falls back to <body>.
@@ -662,8 +668,8 @@ async function prepareJoin() {
   try { secret = params.get('k') || ''; if (e2ee.fromB64(secret).length !== 32) throw new Error(); }
   catch { throw new Error('The link is damaged: it has no encryption key. Ask for the full link again.'); }
   const needsPassword = params.get('pw') === '1';
-  const password = needsPassword ? $('join-password').value : '';
-  if (needsPassword && !password) throw new Error('Enter the room password.');
+  const password = needsPassword ? $('join-password')?.value || '' : '';
+  if (needsPassword && !password) throw Object.assign(new Error('Enter the room password.'), { code: 'password_empty' });
   const secrets = await e2ee.roomSecrets(secret, await e2ee.passwordKey(secret, password));
   const pair = await e2ee.generateKeyPair();
   const body = { invite_token: params.get('invite'), join_proof: secrets.verifier, key_share: await e2ee.signShare(secrets, 'guest', pair.publicKey) };
@@ -671,19 +677,6 @@ async function prepareJoin() {
   prepared.join = { key: crypto.randomUUID(), body, secrets, pair, e2ee: { has_password: Boolean(password), public_key: pair.publicKey, next_counter: 1 } };
   return prepared.join;
 }
-$('join-password').addEventListener('input', () => { prepared.join = null; });
-$('join-button').addEventListener('click', async () => {
-  $('join-button').disabled = true; showError('home-error');
-  try {
-    checkStorage();
-    const request = await prepareJoin();
-    const credentials = await api('/api/v1/join', request.body, '', request.key, { invalid_input: 'This invite is not valid. Check the link or ask for a new one.' });
-    prepared.join = null;
-    $('join-password').value = '';
-    await enter({ ...credentials, e2ee: request.e2ee }, { secrets: request.secrets, privateKey: request.pair.privateKey });
-  } catch (e) { showError('home-error', e.message); }
-  finally { $('join-button').disabled = false; }
-});
 const END_COPY = {
   end: 'End the conversation? The room and its history will be gone for both of you.',
   mismatch: "The codes don't match. The person on the other end may not be your contact. End the conversation for both?",
@@ -776,17 +769,123 @@ $('notify-button').addEventListener('click', async () => {
 });
 setInterval(updateTimer, 1000);
 
+const INVITE_TERMINAL = {
+  closed: {
+    title: "This link can't be opened",
+    lines: ["It may have been used already, turned off after wrong passwords, or the conversation is over. For privacy, nullchat doesn't say which.", "If you haven't opened this link before, tell the person who sent it, using a different app, and ask for a new one."],
+    action: true,
+  },
+  damaged: { title: 'This link is incomplete', lines: ['Part of the link is missing. Ask for the full link again, and copy it in one piece.'], action: true },
+  insecure: { title: 'Open this link over HTTPS', lines: ['Encryption only works on a secure connection. Open the link at its https:// address.'], action: false },
+};
+const INVITE_FACTS = ['Messages are encrypted in your browser. The server only sees ciphertext.', 'The room closes by itself when its time runs out.', 'No sign-up, no profile.'];
+function inviteEl(tag, text, props = {}) {
+  const el = document.createElement(tag);
+  if (text) el.textContent = text;
+  return Object.assign(el, props);
+}
+// Builds the guest screen for one state: 'ready', 'closed', 'damaged' or 'insecure'.
+function renderInvite(inviteState) {
+  const body = $('invite-body');
+  body.replaceChildren();
+  state.inviteShown = inviteState;
+  const terminal = INVITE_TERMINAL[inviteState];
+  if (terminal) {
+    $('invite-title').textContent = terminal.title;
+    for (const line of terminal.lines) body.append(inviteEl('p', line));
+    if (terminal.action) body.append(inviteEl('a', 'Create your own room', { className: 'primary', href: '/' }));
+    $('invite-title').focus();
+    return;
+  }
+  $('invite-title').textContent = "You're invited to a private conversation";
+  body.append(inviteEl('p', 'This link holds one seat and works once. When you join, the room opens for the two of you.'));
+  const facts = inviteEl('ul', '', { className: 'invite-facts' });
+  for (const fact of INVITE_FACTS) facts.append(inviteEl('li', fact));
+  body.append(facts);
+  const form = inviteEl('form', '', { id: 'join-form', noValidate: true });
+  let input = null;
+  if (params.get('pw') === '1') {
+    form.append(inviteEl('label', 'Room password', { htmlFor: 'join-password' }));
+    input = inviteEl('input', '', { id: 'join-password', type: 'password', autocomplete: 'off', maxLength: 200 });
+    input.setAttribute('aria-describedby', 'join-password-hint');
+    form.append(input);
+    form.append(inviteEl('p', 'The person who invited you should send it separately from the link.', { id: 'join-password-hint', className: 'field-hint' }));
+    const fieldError = inviteEl('p', '', { id: 'join-field-error', className: 'error', hidden: true });
+    fieldError.setAttribute('role', 'alert');
+    form.append(fieldError);
+  }
+  const submit = inviteEl('button', 'Join the conversation', { id: 'join-button', className: 'primary' });
+  submit.type = 'submit';
+  form.append(submit);
+  const joinError = inviteEl('p', '', { id: 'join-error', className: 'error', hidden: true });
+  joinError.setAttribute('role', 'alert');
+  form.append(joinError);
+  const status = inviteEl('p', '', { id: 'join-status', className: 'sr-only' });
+  status.setAttribute('role', 'status');
+  form.append(status);
+  body.append(form);
+  body.append(inviteEl('a', 'Or create your own room', { className: 'text-link', href: '/' }));
+  form.addEventListener('submit', submitJoin);
+  input?.addEventListener('input', () => {
+    prepared.join = null;
+    input.removeAttribute('aria-invalid');
+    input.setAttribute('aria-describedby', 'join-password-hint');
+    showError('join-field-error');
+  });
+}
+// The error goes under the password field, or under the button when the link has none.
+function showJoinFieldError(text) {
+  const input = $('join-password');
+  if (!input) { showError('join-error', text); return; }
+  showError('join-field-error', text);
+  input.setAttribute('aria-invalid', 'true');
+  input.setAttribute('aria-describedby', 'join-password-hint join-field-error');
+  input.focus();
+}
+async function submitJoin(event) {
+  event.preventDefault();
+  const button = $('join-button');
+  if (button.disabled) return;
+  button.disabled = true; button.textContent = 'Joining…';
+  $('join-status').textContent = 'Joining the conversation…';
+  showError('join-error');
+  const field = $('join-password');
+  if ($('join-field-error')) showError('join-field-error');
+  if (field) {
+    field.removeAttribute('aria-invalid');
+    field.setAttribute('aria-describedby', 'join-password-hint');
+    field.readOnly = true;
+  }
+  try {
+    checkStorage();
+    const request = await prepareJoin();
+    const credentials = await api('/api/v1/join', request.body, '', request.key);
+    await enter({ ...credentials, e2ee: request.e2ee }, { secrets: request.secrets, privateKey: request.pair.privateKey });
+    prepared.join = null;
+    if ($('join-password')) $('join-password').value = '';
+  } catch (e) {
+    const outcome = e.code === 'password_empty' ? 'field' : joinOutcome(e.code);
+    if (outcome === 'closed') { renderInvite('closed'); return; }
+    if (outcome === 'damaged') { renderInvite('damaged'); return; }
+    button.disabled = false; button.textContent = 'Join the conversation';
+    if (field) field.readOnly = false;
+    $('join-status').textContent = '';
+    if (outcome === 'field') showJoinFieldError(e.code === 'password_empty' ? 'Enter the room password.' : 'Wrong password, or the link is damaged. After 5 wrong attempts the link stops working.');
+    else showError('join-error', e.message);
+  }
+}
+
 const params = new URLSearchParams(location.hash.slice(1));
-if (!globalThis.crypto?.subtle) {
+if (params.has('invite')) {
+  $('home').hidden = true; $('invite').hidden = false;
+  if (globalThis.crypto?.subtle) keystore.sweepExpired().catch(() => {});
+  renderInvite(linkState({ invite: params.get('invite'), k: params.get('k'), secure: Boolean(globalThis.crypto?.subtle) }));
+} else if (!globalThis.crypto?.subtle) {
   showError('home-error', 'Encryption works only over HTTPS or on localhost. Open the service at a secure address.');
-  $('create-button').disabled = true; $('join-button').disabled = true;
+  $('create-button').disabled = true;
 } else {
   keystore.sweepExpired().catch(() => {});
-  if (params.has('invite')) {
-    $('create-form').hidden = true; $('invite-panel').hidden = false; $('card-title').textContent = 'You are invited'; $('card-eyebrow').textContent = 'INVITATION';
-    $('join-password-row').hidden = params.get('pw') !== '1';
-    document.querySelector('.create-card .muted').textContent = 'One conversation. One invite, just for you.';
-  } else if (params.has('room')) {
+  if (params.has('room')) {
     const restoreFailed = () => {
       $('home').hidden = false; $('chat').hidden = true;
       history.replaceState(null, '', '/');
