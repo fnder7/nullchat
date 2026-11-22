@@ -588,3 +588,114 @@ func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {
 		t.Error("Share rethrows non-abort errors")
 	}
 }
+
+// mobileCSS returns the bodies of every @media(max-width:700px) block, joined.
+func mobileCSS(css string) string {
+	var out strings.Builder
+	rest := css
+	for {
+		i := strings.Index(rest, "@media(max-width:700px)")
+		if i < 0 {
+			return out.String()
+		}
+		rest = rest[i:]
+		depth, end := 0, 0
+		for j, c := range rest {
+			if c == '{' {
+				depth++
+			} else if c == '}' {
+				depth--
+				if depth == 0 {
+					end = j
+					break
+				}
+			}
+		}
+		out.WriteString(rest[:end])
+		rest = rest[end:]
+	}
+}
+
+func TestFrontendMobileShellLayout(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+
+	chat := html[strings.Index(html, `<main id="chat"`):]
+	head := strings.Index(chat, `<header class="chat-head">`)
+	if head < 0 || head > strings.Index(chat, "room-sidebar") {
+		t.Error("chat-head must be the first child of #chat, before the sidebar")
+	}
+	for _, want := range []string{
+		`id="chat-head-title" tabindex="-1"`,
+		`id="room-sheet"`,
+		`interactive-widget=resizes-content`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	for id, attrs := range map[string][]string{
+		"chat-head-timer": {`aria-hidden="true"`},
+		"sheet-button":    {`aria-controls="room-sheet"`, `aria-label="Room details"`},
+	} {
+		tag := regexp.MustCompile(`<[^>]*id="` + id + `"[^>]*>`).FindString(html)
+		if tag == "" {
+			t.Errorf("index.html lacks #%s", id)
+		}
+		for _, a := range attrs {
+			if !strings.Contains(tag, a) {
+				t.Errorf("#%s lacks %s", id, a)
+			}
+		}
+	}
+	alert := `<p id="timer-alert" class="sr-only" role="status"></p>`
+	card := html[strings.Index(html, `id="timer-card"`):]
+	card = card[:strings.Index(card, "</div></div>")]
+	if !strings.Contains(html, alert) || strings.Contains(card, alert) {
+		t.Error("#timer-alert must live outside the timer card")
+	}
+
+	if !strings.Contains(js, "matchMedia('(max-width:700px)')") {
+		t.Error("app.js has no MOBILE media query")
+	}
+	enter := funcBody(t, js, "async function enter(")
+	for _, want := range []string{"classList.add('in-chat')", "$('chat-head-title').focus()", "$('room-title').focus()"} {
+		if !strings.Contains(enter, want) {
+			t.Errorf("enter() lacks %s", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, js, "function updateTimer("), "chat-head-timer") {
+		t.Error("updateTimer() does not mirror into the head chip")
+	}
+	fin := funcBody(t, js, "function finish(")
+	if !strings.Contains(fin, "'Ended'") || !strings.Contains(fin, "sheet-button") {
+		t.Error("finish() must show Ended and hide the sheet button")
+	}
+	restore := js[strings.Index(js, "const restoreFailed"):]
+	restore = restore[:strings.Index(restore, "};")]
+	if !strings.Contains(restore, "classList.remove('in-chat')") {
+		t.Error("restoreFailed does not drop in-chat")
+	}
+
+	m := mobileCSS(css)
+	for _, want := range []string{"min-height:0", "var(--app-height", "body.in-chat .header", "body.in-chat footer"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("mobile CSS lacks %s", want)
+		}
+	}
+	if !regexp.MustCompile(`\.messages-wrap\s*\{[^}]*min-height:0`).MatchString(m) {
+		t.Error("mobile .messages-wrap lacks min-height:0")
+	}
+	if !regexp.MustCompile(`#chat\s*\{[^}]*var\(--app-height`).MatchString(m) {
+		t.Error("mobile #chat does not use --app-height")
+	}
+	if strings.Contains(m, "calc(100dvh - 245px)") || strings.Contains(m, "min-height:430px") {
+		t.Error("mobile CSS keeps the old fixed conversation height")
+	}
+}

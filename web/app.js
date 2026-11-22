@@ -5,6 +5,7 @@ import { linkState, joinOutcome } from './invite.js';
 import { trustState, badge, collapsible, inviteURL, codeLabel } from './trust.js';
 
 const $ = (id) => document.getElementById(id);
+const MOBILE = matchMedia('(max-width:700px)');
 const MAX_RECONNECT_ATTEMPTS = 8;
 const DEFAULT_TITLE = 'Quiet conversation';
 const state = {
@@ -90,9 +91,11 @@ async function enter(credentials, fresh = null) {
   $('home').hidden = true;
   $('invite').hidden = true;
   $('chat').hidden = false;
+  document.body.classList.add('in-chat');
   $('room-title').textContent = state.title;
+  $('chat-head-title').textContent = state.title;
   // The control that had focus is hidden now; without this, focus falls back to <body>.
-  $('room-title').focus();
+  if (MOBILE.matches) $('chat-head-title').focus(); else $('room-title').focus();
   updateTitle();
   await establishKey();
   renderParticipants();
@@ -473,6 +476,10 @@ function finish(label) {
   $('messages').replaceChildren();
   renderTrust();
   $('end-button').hidden = true;
+  $('chat-head-timer').textContent = 'Ended';
+  $('chat-head-timer').classList.remove('ending');
+  $('timer-card').classList.remove('ending');
+  $('sheet-button').hidden = true;
   $('message-form').hidden = true;
   document.querySelector('.composer-hint').hidden = true;
   $('ended-title').textContent = label;
@@ -622,6 +629,8 @@ function updateTimer() {
   $('timer').textContent = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
   $('timer-bar').style.width = `${Math.min(100, remaining / state.totalSeconds * 100)}%`;
   $('timer-card').classList.toggle('ending', remaining <= 60);
+  $('chat-head-timer').textContent = $('timer').textContent;
+  $('chat-head-timer').classList.toggle('ending', remaining <= 60);
   // Announced once; a one-minute room does not need to be told at its start.
   if (remaining <= 60 && !state.timerWarned && state.totalSeconds > 90) {
     state.timerWarned = true;
@@ -888,6 +897,7 @@ if (params.has('invite')) {
   if (params.has('room')) {
     const restoreFailed = () => {
       $('home').hidden = false; $('chat').hidden = true;
+      document.body.classList.remove('in-chat');
       history.replaceState(null, '', '/');
       showError('home-error', 'This tab\'s keys could not be restored. Create a new room.');
     };
