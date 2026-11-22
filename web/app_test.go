@@ -1136,6 +1136,9 @@ func TestFrontendSheetParticipantsAndCounter(t *testing.T) {
 	if !regexp.MustCompile(`\.composer-hint \.byte-count\s*\{[^}]*margin-left:auto`).MatchString(css) {
 		t.Error("the byte count does not stay right-aligned when the message counter is hidden")
 	}
+	if !regexp.MustCompile(`#message-count\s*\{[^}]*color:var\(--muted\)`).MatchString(css) {
+		t.Error("#message-count does not use the muted colour of the byte count")
+	}
 }
 
 // smallFontRules returns the selector of every rule, media blocks included,

@@ -1418,6 +1418,10 @@ footer>span:first-child {
   color:var(--error);
 }
 
+#message-count {
+  color:var(--muted);
+}
+
 .timer-card.ending strong {
   color:var(--error);
 }
