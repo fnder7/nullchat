@@ -85,6 +85,11 @@ button:disabled {
   color:#243019;
 }
 
+.primary::selection,.send-button::selection {
+  background:#243019;
+  color:var(--accent);
+}
+
 input,textarea {
   caret-color:var(--accent);
 }
@@ -899,6 +904,7 @@ footer>span:first-child {
 
 .send-button:disabled {
   background:var(--line);
+  border:1px solid var(--muted-subtle);
   color:var(--muted);
   opacity:1;
 }
@@ -967,7 +973,7 @@ footer>span:first-child {
     padding-top:60px;
   }
   .flow {
-    gap:9px;
+    gap:9px 20px;
   }
   .create-card {
     padding:25px;

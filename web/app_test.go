@@ -986,6 +986,9 @@ func TestFrontendNoArrowGlyphs(t *testing.T) {
 	if m := regexp.MustCompile(`background:([^;}]*)`).FindStringSubmatch(disabled); m == nil || strings.Contains(m[1], "var(--accent)") {
 		t.Errorf("disabled send background must not be the accent: %s", disabled)
 	}
+	if !strings.Contains(disabled, "border:1px solid var(--muted-subtle)") {
+		t.Errorf("disabled send needs a --muted-subtle border: %s", disabled)
+	}
 	if strings.Contains(disabled, "opacity:.45") {
 		t.Errorf("disabled send keeps opacity:.45: %s", disabled)
 	}
