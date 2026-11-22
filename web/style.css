@@ -1108,9 +1108,22 @@ footer>span:first-child {
       animation:none;
     }
   }
+  /* The close button shares the title's row instead of taking a row of its own. */
+  .room-sidebar.open {
+    padding-top:20px;
+  }
+  .room-sidebar.open>.eyebrow {
+    display:none;
+  }
+  .room-sidebar.open #room-title {
+    padding-right:44px;
+  }
   #sheet-close {
     display:block;
-    margin:0 -10px 0 auto;
+    position:absolute;
+    top:10px;
+    right:10px;
+    margin:0;
     width:44px;
     height:44px;
     border:0;
@@ -1251,41 +1264,44 @@ footer>span:first-child {
   border-color:var(--error);
 }
 
-/* A status, not a form field: a lit lock, a plain statement, a quiet explanation. */
+/* A section like its neighbours, not another box: a lit lock beside a plain statement,
+   one line of why, and the actual ciphers as data. */
 .safety-panel {
   display:grid;
   grid-template-columns:auto minmax(0,1fr);
-  gap:10px;
+  gap:6px 8px;
   align-items:center;
   margin-top:22px;
-  padding:14px;
-  border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line));
-  border-radius:10px;
-  background:color-mix(in srgb,var(--accent) 5%,var(--panel));
+  padding-top:18px;
+  border-top:1px solid var(--line);
 }
 
 .safety-icon {
-  box-sizing:content-box;
-  padding:6px;
-  border-radius:8px;
+  width:16px;
+  height:16px;
   color:var(--accent);
-  background:color-mix(in srgb,var(--accent) 12%,transparent);
 }
 
 .safety-panel strong {
   font-size:14px;
   font-weight:600;
   line-height:1.3;
-  color:var(--text);
+  color:var(--accent);
 }
 
 .safety-panel p {
   grid-column:1/-1;
   margin:0;
-  font-size:12px;
-  line-height:1.55;
+  font-size:13px;
+  line-height:1.5;
   color:var(--muted);
   text-wrap:pretty;
+}
+
+.safety-panel .safety-spec {
+  margin-top:4px;
+  font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:var(--muted-subtle);
 }
 
 .message.undecryptable .bubble {
