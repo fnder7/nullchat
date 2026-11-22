@@ -1,6 +1,7 @@
 import * as e2ee from './crypto.js';
 import * as keystore from './keystore.js';
 import { linkify } from './linkify.js';
+import { trustState, badge, collapsible, inviteURL, codeLabel } from './trust.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_RECONNECT_ATTEMPTS = 8;
@@ -13,6 +14,7 @@ const state = {
   pending: new Map(), failed: new Map(), accepted: new Map(),
   ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0,
   unseen: 0, unread: 0, timerWarned: false, notification: null,
+  trustOpen: false, trustShown: '', safetyCode: undefined,
 };
 // A create/join request is encrypted once and reused verbatim on retry, so the
 // Idempotency-Key replays the same room with key shares this tab still holds.
@@ -94,14 +96,13 @@ async function enter(credentials, fresh = null) {
   connect();
 }
 
+const KEY_NOTE = 'Your contact\'s key was replaced or the link is damaged. Do not continue: end the chat and create a new room.';
 function keyFailure() {
   state.keyError = true;
   state.messageKey = null;
-  $('safety-panel').classList.add('broken');
-  $('safety-code').textContent = 'key verification failed';
-  $('safety-note').textContent = 'Your contact\'s key was replaced or the link is damaged. Do not continue: end the chat and create a new room.';
-  // The panel is not a live region, and this is the one warning nobody may miss.
-  $('safety-alert').textContent = `Key verification failed. ${$('safety-note').textContent}`;
+  renderTrust();
+  // The strip is not a live region, and this is the one warning nobody may miss.
+  $('safety-alert').textContent = `Key verification failed. ${KEY_NOTE}`;
   connection(state.connected, $('connection-status').textContent);
 }
 
@@ -118,7 +119,6 @@ async function establishKey() {
   }
   if (!creator || !guest) {
     if (state.peers) return keyFailure(); // a participant cannot leave once the key exists
-    $('safety-code').textContent = 'waiting for your contact';
     return;
   }
   // Pinned in sessionStorage, so a key swapped across a reload is caught too.
@@ -127,7 +127,7 @@ async function establishKey() {
   if (!state.messageKey) {
     state.messageKey = await e2ee.messageKey(state.secrets, state.privateKey, creator.key_share.public_key, guest.key_share.public_key, own.role);
     state.plain.clear();
-    $('safety-code').textContent = await e2ee.safetyCode(creator.key_share.public_key, guest.key_share.public_key);
+    state.safetyCode = await e2ee.safetyCode(creator.key_share.public_key, guest.key_share.public_key);
   }
   if (state.peers === peers) return;
   state.peers = peers;
@@ -149,8 +149,117 @@ function renderParticipants() {
     $('participants').append(li);
   }
   $('participant-count').textContent = `${state.room.participants.length} / 2`;
-  $('share-panel').hidden = !state.invite || !state.e2ee?.secret || state.room.participants.length > 1 || state.ended;
-  if (state.invite && state.e2ee?.secret) $('invite-link').value = `${location.origin}/#invite=${state.invite}&k=${state.e2ee.secret}${state.e2ee.has_password ? '&pw=1' : ''}`;
+  renderTrust();
+}
+// The strip above the log. The body is rebuilt only when the derived state changes, so
+// participant re-renders keep the focus and the Copy feedback. verified and later show the
+// strip only while state.trustOpen; every other state decides for itself.
+const trustNow = () => trustState({
+  ended: state.ended, keyError: state.keyError, alone: state.room?.participants.length === 1,
+  hasInvite: !!(state.invite && state.e2ee?.secret), code: state.safetyCode, verified: state.e2ee?.verified,
+});
+function renderTrust() {
+  // Two people but no code yet (the key is still being derived): keep what is shown.
+  if (!state.ended && !state.keyError && state.room.participants.length > 1 && !state.safetyCode) return;
+  const next = trustNow();
+  const shown = collapsible(next) && !state.trustOpen ? 'hidden' : next;
+  const b = badge(next);
+  $('trust-badge').hidden = !b;
+  if (b) { $('trust-badge').textContent = b.label; $('trust-badge').dataset.tone = b.tone; }
+  $('trust-badge').setAttribute('aria-expanded', String(shown !== 'hidden'));
+  if (shown === state.trustShown) return;
+  const before = state.trustShown;
+  state.trustShown = shown;
+  const body = $('trust-body');
+  const hadFocus = $('trust-strip').contains(document.activeElement);
+  body.replaceChildren();
+  $('trust-strip').hidden = shown === 'hidden';
+  $('trust-strip').dataset.tone = shown === 'waiting' || shown === 'broken' ? 'danger' : '';
+  if (shown === 'invite') buildInvite(body);
+  else if (shown === 'waiting') {
+    $('trust-title').textContent = 'Invite revoked';
+    const p = document.createElement('p'); p.textContent = 'The invite was revoked after 5 wrong password attempts. End the chat and create a new room.';
+    body.append(p);
+  } else if (shown === 'verify' || shown === 'later') {
+    buildVerify(body);
+    if (shown === 'verify' && before === 'invite') $('trust-status').textContent = 'Your contact joined. Compare the safety code.';
+  } else if (shown === 'verified') buildVerified(body);
+  else if (shown === 'broken') buildBroken(body);
+  if (hadFocus && shown !== 'hidden') $('trust-title').focus();
+}
+function trustButton(label, className, onClick) {
+  const button = document.createElement('button'); button.type = 'button'; button.className = className; button.textContent = label;
+  button.addEventListener('click', onClick);
+  return button;
+}
+function trustCode() {
+  const code = document.createElement('strong'); code.className = 'trust-code';
+  code.textContent = state.safetyCode; code.setAttribute('aria-label', codeLabel(state.safetyCode));
+  return code;
+}
+function buildVerify(body) {
+  $('trust-title').textContent = 'Is this really them?';
+  const text = document.createElement('p'); text.textContent = 'Compare this code with your contact by voice or in another app. If it matches, you are talking to the right person.';
+  const actions = document.createElement('div'); actions.className = 'trust-actions';
+  const mismatch = trustButton("It doesn't match", 'danger', () => openEndDialog('mismatch', mismatch));
+  actions.append(trustButton('It matches', 'primary trust-primary', () => setVerified('match')), mismatch, trustButton('Later', 'trust-link-button', () => setVerified('later')));
+  body.append(trustCode(), text, actions);
+}
+function buildVerified(body) {
+  $('trust-title').textContent = 'Safety code';
+  const text = document.createElement('p'); text.textContent = 'You confirmed this code matches.';
+  const actions = document.createElement('div'); actions.className = 'trust-actions';
+  actions.append(
+    trustButton('Compare again', 'trust-link-button', () => setVerified(undefined)),
+    trustButton('Hide', 'trust-link-button', () => { state.trustOpen = false; renderTrust(); $('trust-badge').focus(); }));
+  body.append(trustCode(), text, actions);
+}
+function buildBroken(body) {
+  $('trust-title').textContent = 'Key verification failed';
+  const note = document.createElement('p'); note.textContent = KEY_NOTE;
+  const actions = document.createElement('div'); actions.className = 'trust-actions';
+  const end = trustButton('End the chat', 'danger', () => openEndDialog('broken', end));
+  actions.append(end);
+  body.append(note, actions);
+}
+// The verdict stays in this tab's sessionStorage: it is never sent to the server or the contact.
+function setVerified(value) {
+  if (value === undefined) delete state.e2ee.verified; else state.e2ee.verified = value;
+  save();
+  state.trustOpen = false;
+  renderTrust();
+  if (value !== undefined) $('trust-badge').focus();
+  if (value === 'match') $('trust-status').textContent = 'Marked as verified.';
+}
+$('trust-badge').addEventListener('click', () => {
+  const now = trustNow();
+  if (now === 'broken') $('trust-title').focus();
+  else if (now === 'verify') setVerified('later');
+  else if (collapsible(now)) { state.trustOpen = !state.trustOpen; renderTrust(); }
+});
+function buildInvite(body) {
+  const url = inviteURL(location.origin, state.invite, state.e2ee.secret, state.e2ee.has_password);
+  $('trust-title').textContent = 'Send this link to your contact';
+  const warn = document.createElement('p'); warn.textContent = 'Anyone who opens this link takes the seat. Send it somewhere private.';
+  const link = document.createElement('p'); link.className = 'trust-link'; link.textContent = url;
+  const actions = document.createElement('div'); actions.className = 'trust-actions';
+  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy link ↗';
+  copy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(url); copy.textContent = 'Link copied ✓'; }
+    catch { getSelection().selectAllChildren(link); copy.textContent = 'Copy the selected link'; }
+    setTimeout(() => { copy.textContent = 'Copy link ↗'; }, 3000);
+  });
+  actions.append(copy);
+  if (typeof navigator.share === 'function') {
+    const share = document.createElement('button'); share.type = 'button'; share.className = 'secondary'; share.textContent = 'Share…';
+    share.addEventListener('click', async () => {
+      try { await navigator.share({ url }); } catch (e) { if (e.name !== 'AbortError') copy.click(); }
+    });
+    actions.append(share);
+  }
+  body.append(warn, link);
+  if (state.e2ee.has_password) { const pw = document.createElement('p'); pw.textContent = 'Send the password separately.'; body.append(pw); }
+  body.append(actions);
 }
 function buildMessage(message, pending = false) {
   const plain = message.id ? state.plain.get(message.id) : { text: message.text };
@@ -201,7 +310,7 @@ function buildEmptyState() {
   const empty = document.createElement('div'); empty.className = 'empty-state'; empty.dataset.key = `empty:${alone}`;
   const symbol = document.createElement('span'); symbol.className = 'empty-symbol'; symbol.textContent = '[ … ]';
   const title = document.createElement('strong'); title.textContent = alone ? 'The conversation is still ahead' : 'You are both here';
-  const p = document.createElement('p'); p.textContent = alone ? 'Share the invite. You can write once your contact joins: that is when the shared key appears.' : 'Time to say hello.';
+  const p = document.createElement('p'); p.textContent = alone ? 'Your contact has not joined yet.' : 'Time to say hello.';
   empty.append(symbol, title, p);
   return empty;
 }
@@ -341,6 +450,7 @@ function connection(connected, label) {
 }
 function finish(label) {
   state.ended = true;
+  if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);
   connection(false, label);
   state.socket?.close(1000);
@@ -355,7 +465,7 @@ function finish(label) {
   state.plain.clear();
   state.room.messages = [];
   $('messages').replaceChildren();
-  $('share-panel').hidden = true;
+  renderTrust();
   $('end-button').hidden = true;
   $('message-form').hidden = true;
   document.querySelector('.composer-hint').hidden = true;
@@ -457,7 +567,6 @@ async function handle(ws, data) {
     renderParticipants(); renderMessages(); save();
   } else if (type === 'invite_revoked') {
     state.invite = ''; delete state.e2ee.secret; save(); renderParticipants();
-    showError('chat-error', 'The invite was revoked after 5 wrong password attempts. End the chat and create a new room.');
   }
   else if (type === 'room_expired') finish('The conversation time is over');
   else if (type === 'room_closed') finish('Conversation ended');
@@ -575,16 +684,26 @@ $('join-button').addEventListener('click', async () => {
   } catch (e) { showError('home-error', e.message); }
   finally { $('join-button').disabled = false; }
 });
-$('copy-button').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('invite-link').value); $('copy-button').textContent = 'Link copied ✓'; }
-  catch { $('invite-link').focus(); $('invite-link').select(); $('copy-button').textContent = 'Copy the selected link'; }
-  setTimeout(() => { $('copy-button').textContent = 'Copy link ↗'; }, 3000);
-});
-$('end-button').addEventListener('click', async () => {
-  if (!confirm('End the conversation? The room and its history will be gone for both of you.')) return;
+const END_COPY = {
+  end: 'End the conversation? The room and its history will be gone for both of you.',
+  mismatch: "The codes don't match. The person on the other end may not be your contact. End the conversation for both?",
+  broken: 'Key verification failed, so this conversation is not safe. End it for both?',
+};
+let endReturnTo = null;
+function openEndDialog(reason, returnTo) {
+  endReturnTo = returnTo;
+  $('end-dialog-text').textContent = END_COPY[reason] || END_COPY.end;
+  $('end-confirm').disabled = false;
+  if (!$('end-dialog').open) $('end-dialog').showModal();
+}
+$('end-button').addEventListener('click', () => openEndDialog('end', $('end-button')));
+$('end-cancel').addEventListener('click', () => $('end-dialog').close());
+$('end-dialog').addEventListener('close', () => (endReturnTo?.isConnected ? endReturnTo : $('trust-title')).focus());
+$('end-confirm').addEventListener('click', async () => {
+  $('end-confirm').disabled = true;
   $('end-button').disabled = true;
   try { await api('/api/v1/end', {}, state.credentials.session_token); finish('Conversation ended'); }
-  catch (e) { showError('chat-error', e.message); $('end-button').disabled = false; }
+  catch (e) { $('end-button').disabled = false; $('end-dialog').close(); showError('chat-error', e.message); }
 });
 $('reconnect-button').addEventListener('click', () => {
   if (state.ended) return;
@@ -655,7 +774,6 @@ $('notify-button').addEventListener('click', async () => {
   }
   renderNotify();
 });
-$('invite-link').addEventListener('focus', () => $('invite-link').select());
 setInterval(updateTimer, 1000);
 
 const params = new URLSearchParams(location.hash.slice(1));

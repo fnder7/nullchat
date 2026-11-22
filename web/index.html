@@ -58,20 +58,21 @@
         <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div><p id="timer-alert" class="sr-only" role="status"></p></div>
         <div class="participants-heading"><span class="eyebrow">PARTICIPANTS</span><span id="participant-count">1 / 2</span></div>
         <ul id="participants" class="participants"></ul>
-        <section id="share-panel" class="share-panel" hidden><h3>Invite your contact</h3><p>Send this link personally. <br>It can be used once.</p><input id="invite-link" aria-label="Invite link" readonly><button id="copy-button" class="secondary" type="button">Copy link ↗</button></section>
-        <section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><strong id="safety-code">waiting for your contact</strong><p id="safety-note">Messages are encrypted in the browser. The server sees only ciphertext. Compare this code with your contact by voice: it must match.</p><p id="safety-alert" class="sr-only" role="alert"></p></section>
+        <section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><p>End-to-end encrypted in your browser.</p></section>
         <section id="notify-panel" class="notify-panel" hidden><button id="notify-button" class="secondary" type="button">Turn on notifications</button><p id="notify-note"></p></section>
         <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
         <button id="end-button" class="danger-link" type="button">End the chat for both ↗</button>
       </aside>
       <section class="conversation" aria-label="Conversation">
-        <div class="conversation-head"><div class="connection-state"><span><span class="dot" id="connection-dot"></span><span id="connection-status" role="status">Connecting…</span></span><button id="reconnect-button" class="retry-connection" type="button" hidden>Reconnect</button></div><span class="conversation-label">PRIVATE CONVERSATION</span></div>
+        <div class="conversation-head"><div class="connection-state"><span><span class="dot" id="connection-dot"></span><span id="connection-status" role="status">Connecting…</span></span><button id="reconnect-button" class="retry-connection" type="button" hidden>Reconnect</button></div><span class="conversation-label">PRIVATE CONVERSATION</span><button id="trust-badge" class="trust-badge" type="button" aria-controls="trust-strip" aria-expanded="false" hidden></button><p id="trust-status" class="sr-only" role="status"></p></div>
+        <section id="trust-strip" class="trust-strip" aria-labelledby="trust-title" hidden><h3 id="trust-title" tabindex="-1"></h3><div id="trust-body"></div><p id="safety-alert" class="sr-only" role="alert"></p></section>
         <div class="messages-wrap"><div id="messages" class="messages" role="log" aria-label="Messages" aria-live="polite" tabindex="0"></div><button id="jump-button" class="jump-button" type="button" hidden></button></div>
         <p id="chat-error" class="error chat-error" role="alert" hidden></p>
         <form id="message-form" class="composer"><label for="message" class="sr-only">Message</label><textarea id="message" rows="1" maxlength="4000" placeholder="What's on your mind?" disabled></textarea><button id="send-button" class="send-button" aria-label="Send message" type="submit" disabled>↑</button></form>
         <div class="composer-hint"><span>Enter to send · Shift + Enter for a new line</span><span id="byte-count" class="byte-count" aria-live="polite" hidden></span><span id="message-count">0 / 500 messages</span></div>
         <div id="ended-panel" class="ended-panel" hidden><h3 id="ended-title" tabindex="-1">Conversation ended</h3><p>This room is no longer available.</p><a class="primary" href="/">Start a new conversation ↗</a></div>
       </section>
+      <dialog id="end-dialog" aria-labelledby="end-dialog-text"><p id="end-dialog-text"></p><div class="dialog-actions"><button id="end-confirm" class="danger" type="button">End for both</button><button id="end-cancel" class="secondary" type="button" autofocus>Cancel</button></div></dialog>
     </main>
 
     <footer><span>nullchat © 2026</span><span>History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.</span><a href="/healthz" target="_blank" rel="noreferrer">Server status ↗</a></footer>

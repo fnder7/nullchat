@@ -53,6 +53,28 @@ API and WebSocket as observed through the interface.
 | JOIN-05 | Copy a `#room=...` URL into a new independent context. | Without a saved session, no access to the room or its history is granted. |
 | JOIN-06 | Reload a participant's tab. | Their session, name and the "you" marker are preserved. |
 
+### Trust strip and safety-code verification
+
+The strip (`#trust-strip`) sits above the messages; the badge (`#trust-badge`) sits in the conversation header. Verification status is local to each browser and is never sent to the other participant.
+
+| ID | Preconditions and steps | Expected result |
+|---|---|---|
+| TRUST-01 | As the creator, create a room (with and without a password) and stay alone. | The strip shows "Send this link to your contact", the full link as wrapping monospace text and the warning. With a password it also says "Send the password separately." There is no badge. |
+| TRUST-02 | In the invite state, press **Copy link**. In a browser with `navigator.share`, also check **Share…**. | The link is copied (or selected as a fallback) and the label changes. **Share…** appears only where `navigator.share` exists. |
+| TRUST-03 | Join as the guest while the creator's focus is on **Copy link**. | The creator's focus moves to the strip heading, not to `<body>`. If focus was in the composer, it stays there. A polite status says "Your contact joined. Compare the safety code." |
+| TRUST-04 | Check both tabs after the join. | Both show "Is this really them?", the same large (at least 24px) monospace code, **It matches**, **It doesn't match**, **Later**, and the badge "Not verified". |
+| TRUST-05 | Press **It matches**, then reload. | The strip collapses and takes no space; focus goes to the badge; the badge reads "✓ Verified" and still does after reload. The other participant's tab is unchanged. |
+| TRUST-06 | Open the badge in the verified state, press **Hide**, open it again, then **Compare again**. | The expanded strip shows the code and "You confirmed this code matches." **Hide** collapses it. **Compare again** returns to "Is this really them?" and the badge to "Not verified". |
+| TRUST-07 | Press **Later**, then reload. | The strip collapses, the badge stays "Not verified" and survives reload. Opening the badge shows the verify content again. |
+| TRUST-08 | Press **It doesn't match**, then **Cancel**. | The dialog shows the mismatch wording; Cancel closes it, focus returns to **It doesn't match**, the strip stays in the verify state. |
+| TRUST-09 | Press **It doesn't match**, then **End for both**. | The chat ends for both participants; the strip and badge are hidden. |
+| TRUST-10 | Open the sidebar **End the chat for both** dialog in one tab and end the chat from the other tab. | The dialog closes by itself when the end arrives; no error is shown. |
+| TRUST-11 | Press Esc in the end dialog. | The dialog closes without ending anything and focus returns to the opener. |
+| TRUST-12 | Provoke a key-verification failure. | The strip shows the alarm "Key verification failed" with an **End the chat** button; the badge reads "Key error"; **End the chat** asks for confirmation with the broken wording. Not observed in the browser; covered by source tests. |
+| TRUST-13 | Exhaust the password attempts (5 wrong) so the invite is revoked. | The creator's strip shows the revoked-invite message with no link and no badge. Not observed in the browser; covered by source tests. |
+| TRUST-14 | At 375px width, check the invite, verify and collapsed states. | The strip is at the top of the conversation; there is no horizontal scroll; text is at least 12px; collapsed it takes no height. |
+| TRUST-15 | Run the screen-reader and keyboard pass over the strip. | The strip is a labelled region outside the message log; the code is read in groups; the badge announces its expanded state; status changes are announced politely. |
+
 ### Messages
 
 | ID | Preconditions and steps | Expected result |
