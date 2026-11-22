@@ -293,9 +293,11 @@ function buildMessage(message, pending = false) {
   meta.append(name, time);
   if (self && status === 'accepted') {
     const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    check.setAttribute('class', 'sent-check'); check.setAttribute('viewBox', '0 0 12 12'); check.setAttribute('role', 'img'); check.setAttribute('aria-label', 'Sent');
+    check.setAttribute('class', 'sent-check'); check.setAttribute('viewBox', '0 0 12 12'); check.setAttribute('aria-hidden', 'true');
     const tick = document.createElementNS('http://www.w3.org/2000/svg', 'path'); tick.setAttribute('d', 'M2 6.5l2.5 2.5L10 3.5');
-    check.append(tick); meta.append(check);
+    check.append(tick);
+    const sr = document.createElement('span'); sr.className = 'sr-only'; sr.textContent = 'Sent';
+    meta.append(check, sr);
   }
   article.dataset.group += `|${time.textContent}`;
   const bubble = document.createElement('div'); bubble.className = 'bubble';

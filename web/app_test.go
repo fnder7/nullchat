@@ -1023,10 +1023,13 @@ func TestFrontendSentCheckAndSameTabLinks(t *testing.T) {
 		}
 	}
 	body := funcBody(t, app, "function buildMessage")
-	for _, want := range []string{`self && status === 'accepted'`, `createElementNS('http://www.w3.org/2000/svg'`, `'aria-label', 'Sent'`, "article.dataset.key = `${message.sender_id}:${message.client_message_id}`;"} {
+	for _, want := range []string{`self && status === 'accepted'`, `createElementNS('http://www.w3.org/2000/svg'`, `'aria-hidden', 'true'`, `sr.className = 'sr-only'; sr.textContent = 'Sent'`, "article.dataset.key = `${message.sender_id}:${message.client_message_id}`;"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("buildMessage lacks %s", want)
 		}
+	}
+	if strings.Contains(body, "'aria-label'") || strings.Contains(body, "'role'") {
+		t.Error("the sent check icon must be hidden from assistive tech, not labelled")
 	}
 	if strings.Contains(body, "dataset.group += `|${time.textContent}`") == false {
 		t.Error("the sent check must not change the grouping key")
@@ -1132,5 +1135,77 @@ func TestFrontendSheetParticipantsAndCounter(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\.composer-hint \.byte-count\s*\{[^}]*margin-left:auto`).MatchString(css) {
 		t.Error("the byte count does not stay right-aligned when the message counter is hidden")
+	}
+}
+
+// smallFontRules returns the selector of every rule, media blocks included,
+// whose font-size or font shorthand sets a size below 12px.
+func smallFontRules(css string) []string {
+	css = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")
+	size := regexp.MustCompile(`(?:^|[;\s])font(?:-size)?\s*:\s*[^;}]*?(\d+(?:\.\d+)?)px`)
+	var out []string
+	var walk func(s string)
+	walk = func(s string) {
+		for {
+			open := strings.Index(s, "{")
+			if open < 0 {
+				return
+			}
+			selector := strings.Join(strings.Fields(s[:open]), " ")
+			depth, end := 0, -1
+			for j := open; j < len(s); j++ {
+				if s[j] == '{' {
+					depth++
+				} else if s[j] == '}' {
+					depth--
+					if depth == 0 {
+						end = j
+						break
+					}
+				}
+			}
+			if end < 0 {
+				return
+			}
+			body := s[open+1 : end]
+			if strings.HasPrefix(selector, "@") {
+				walk(body)
+			} else {
+				for _, m := range size.FindAllStringSubmatch(body, -1) {
+					if px, err := strconv.ParseFloat(m[1], 64); err == nil && px < 12 {
+						out = append(out, selector)
+						break
+					}
+				}
+			}
+			s = s[end+1:]
+		}
+	}
+	walk(css)
+	return out
+}
+
+func TestFrontendNoSmallTextOutsideHome(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Home and footer selectors only; nothing on the chat screen or the sidebar.
+	homeOnly := map[string]bool{
+		".eyebrow":       true,
+		".flow span":     true,
+		".flow b":        true,
+		".small-print":   true,
+		"label span":     true,
+		".room-facts":    true,
+		".card-footnote": true,
+		".principle-num": true,
+		".principles p":  true,
+		"footer":         true,
+	}
+	for _, selector := range smallFontRules(string(css)) {
+		if !homeOnly[selector] {
+			t.Errorf("%s sets text below 12px outside the home page", selector)
+		}
 	}
 }
