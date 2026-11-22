@@ -81,6 +81,8 @@ async function enter(credentials, fresh = null) {
   $('home').hidden = true;
   $('chat').hidden = false;
   $('room-title').textContent = state.title;
+  // The control that had focus is hidden now; without this, focus falls back to <body>.
+  $('room-title').focus();
   document.title = `${state.title} · nullchat`;
   await establishKey();
   renderParticipants();
@@ -95,6 +97,8 @@ function keyFailure() {
   $('safety-panel').classList.add('broken');
   $('safety-code').textContent = 'key verification failed';
   $('safety-note').textContent = 'Your contact\'s key was replaced or the link is damaged. Do not continue: end the chat and create a new room.';
+  // The panel is not a live region, and this is the one warning nobody may miss.
+  $('safety-alert').textContent = `Key verification failed. ${$('safety-note').textContent}`;
   connection(state.connected, $('connection-status').textContent);
 }
 
@@ -145,13 +149,15 @@ function renderParticipants() {
   $('share-panel').hidden = !state.invite || !state.e2ee?.secret || state.room.participants.length > 1 || state.ended;
   if (state.invite && state.e2ee?.secret) $('invite-link').value = `${location.origin}/#invite=${state.invite}&k=${state.e2ee.secret}${state.e2ee.has_password ? '&pw=1' : ''}`;
 }
-function addMessage(message, pending = false) {
+function buildMessage(message, pending = false) {
   const plain = message.id ? state.plain.get(message.id) : { text: message.text };
   const flag = message.id ? state.flags.get(message.id) : null;
-  if (flag?.replay) return; // replayed or reordered by the server; renderMessages explains
+  if (flag?.replay) return null; // replayed or reordered by the server; renderMessages explains
   const self = message.sender_id === state.self.id;
   const status = pending === true ? 'pending' : pending || 'accepted';
   const article = document.createElement('article'); article.className = `message${self ? ' self' : ''} ${status}${plain?.error ? ' undecryptable' : ''}`;
+  // The same key while a message goes pending -> accepted, so its node is patched, not re-announced.
+  article.dataset.key = `${message.sender_id}:${message.client_message_id}`;
   const meta = document.createElement('div'); meta.className = 'message-meta';
   const name = document.createElement('span'); name.textContent = self ? 'You' : (state.room.participants.find((p) => p.id === message.sender_id)?.name || 'Contact');
   const time = document.createElement('span'); time.textContent = status === 'pending' ? 'Sending…' : status === 'failed' ? 'Not sent' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -170,24 +176,53 @@ function addMessage(message, pending = false) {
     const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'retry-message'; retry.dataset.retryId = message.client_message_id; retry.textContent = 'Retry';
     footer.append(reason, retry); article.append(footer);
   }
-  $('messages').append(article);
+  return article;
 }
+function buildEmptyState() {
+  const alone = state.room.participants.length === 1;
+  const empty = document.createElement('div'); empty.className = 'empty-state'; empty.dataset.key = `empty:${alone}`;
+  const symbol = document.createElement('span'); symbol.className = 'empty-symbol'; symbol.textContent = '[ … ]';
+  const title = document.createElement('strong'); title.textContent = alone ? 'The conversation is still ahead' : 'You are both here';
+  const p = document.createElement('p'); p.textContent = alone ? 'Share the invite. You can write once your contact joins: that is when the shared key appears.' : 'Time to say hello.';
+  empty.append(symbol, title, p);
+  return empty;
+}
+// Copies what differs from a freshly built node into the one already in the log. Text
+// is written only where it changed, so a screen reader hears the change and no more.
+function patchNode(node, fresh) {
+  if (node.isEqualNode(fresh)) return;
+  if (node.childElementCount !== fresh.childElementCount) { node.replaceChildren(...fresh.childNodes); node.className = fresh.className; return; }
+  node.className = fresh.className;
+  [...node.children].forEach((child, i) => {
+    const next = fresh.children[i];
+    if (child.childElementCount || next.childElementCount) { if (!child.isEqualNode(next)) patchNode(child, next); }
+    else if (child.textContent !== next.textContent) child.textContent = next.textContent;
+    if (child.className !== next.className) child.className = next.className;
+  });
+}
+// #messages is a live region (role="log"): rebuilding it would make a screen reader read
+// the whole history again on every event. Nodes are reused by key; only new ones are added.
 function renderMessages() {
   const box = $('messages');
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 100;
   const oldTop = box.scrollTop;
-  box.replaceChildren();
-  if (!state.room.messages.length && !state.pending.size && !state.failed.size) {
-    const alone = state.room.participants.length === 1;
-    const empty = document.createElement('div'); empty.className = 'empty-state';
-    const symbol = document.createElement('span'); symbol.className = 'empty-symbol'; symbol.textContent = '[ … ]';
-    const title = document.createElement('strong'); title.textContent = alone ? 'The conversation is still ahead' : 'You are both here';
-    const p = document.createElement('p'); p.textContent = alone ? 'Share the invite. You can write once your contact joins: that is when the shared key appears.' : 'Time to say hello.';
-    empty.append(symbol, title, p); box.append(empty);
+  const wanted = [];
+  if (!state.room.messages.length && !state.pending.size && !state.failed.size) wanted.push(buildEmptyState());
+  state.room.messages.forEach((m) => wanted.push(buildMessage(m)));
+  state.pending.forEach((m) => wanted.push(buildMessage(m, true)));
+  state.failed.forEach((m) => wanted.push(buildMessage(m, 'failed')));
+  const current = new Map([...box.children].map((node) => [node.dataset.key, node]));
+  const keep = new Set();
+  let index = 0;
+  for (const fresh of wanted) {
+    if (!fresh || keep.has(fresh.dataset.key)) continue;
+    let node = current.get(fresh.dataset.key);
+    if (node) patchNode(node, fresh); else node = fresh;
+    keep.add(node.dataset.key);
+    if (box.children[index] !== node) box.insertBefore(node, box.children[index] || null);
+    index += 1;
   }
-  state.room.messages.forEach((m) => addMessage(m));
-  state.pending.forEach((m) => addMessage(m, true));
-  state.failed.forEach((m) => addMessage(m, 'failed'));
+  for (const node of [...box.children]) if (!keep.has(node.dataset.key)) node.remove();
   if ([...state.flags.values()].some((f) => f.replay)) showError('chat-error', 'The server replayed or reordered a message. It is hidden.');
   $('message-count').textContent = `${state.room.messages.length} / 500`;
   box.scrollTop = atBottom ? box.scrollHeight : oldTop;
@@ -252,6 +287,7 @@ function finish(label) {
   document.querySelector('.composer-hint').hidden = true;
   $('ended-title').textContent = label;
   $('ended-panel').hidden = false;
+  $('ended-title').focus();
 }
 function socketIsOpen(socket = state.socket) {
   return socket && socket.readyState === WebSocket.OPEN;
