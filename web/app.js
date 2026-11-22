@@ -2,6 +2,7 @@ import * as e2ee from './crypto.js';
 import * as keystore from './keystore.js';
 import { linkify } from './linkify.js';
 import { linkState, joinOutcome } from './invite.js';
+import { needsReload } from './nav.js';
 import { trustState, badge, collapsible, inviteURL, codeLabel } from './trust.js';
 
 const $ = (id) => document.getElementById(id);
@@ -257,11 +258,11 @@ function buildInvite(body) {
   const warn = document.createElement('p'); warn.textContent = 'Anyone who opens this link takes the seat. Send it somewhere private.';
   const link = document.createElement('p'); link.className = 'trust-link'; link.textContent = url;
   const actions = document.createElement('div'); actions.className = 'trust-actions';
-  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy link ↗';
+  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy link';
   copy.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(url); copy.textContent = 'Link copied ✓'; }
+    try { await navigator.clipboard.writeText(url); copy.textContent = 'Link copied'; }
     catch { getSelection().selectAllChildren(link); copy.textContent = 'Copy the selected link'; }
-    setTimeout(() => { copy.textContent = 'Copy link ↗'; }, 3000);
+    setTimeout(() => { copy.textContent = 'Copy link'; }, 3000);
   });
   actions.append(copy);
   if (typeof navigator.share === 'function') {
@@ -289,6 +290,12 @@ function buildMessage(message, pending = false) {
   const name = document.createElement('span'); name.textContent = self ? 'You' : (state.room.participants.find((p) => p.id === message.sender_id)?.name || 'Contact');
   const time = document.createElement('span'); time.textContent = status === 'pending' ? 'Sending…' : status === 'failed' ? 'Not sent' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   meta.append(name, time);
+  if (self && status === 'accepted') {
+    const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    check.setAttribute('class', 'sent-check'); check.setAttribute('viewBox', '0 0 12 12'); check.setAttribute('role', 'img'); check.setAttribute('aria-label', 'Sent');
+    const tick = document.createElementNS('http://www.w3.org/2000/svg', 'path'); tick.setAttribute('d', 'M2 6.5l2.5 2.5L10 3.5');
+    check.append(tick); meta.append(check);
+  }
   article.dataset.group += `|${time.textContent}`;
   const bubble = document.createElement('div'); bubble.className = 'bubble';
   if (plain?.error) bubble.textContent = '⚠ This message could not be decrypted';
@@ -965,3 +972,9 @@ if (params.has('invite')) {
     } catch { restoreFailed(); }
   }
 }
+
+// replaceState (enter, invite cleanup) fires no hashchange, so a link pasted into
+// this tab is the only way here; the event carries the entry it replaced.
+window.addEventListener('hashchange', (event) => {
+  if (needsReload(new URL(event.oldURL).hash, new URL(event.newURL).hash)) location.reload();
+});

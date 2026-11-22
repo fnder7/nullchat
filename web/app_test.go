@@ -25,7 +25,6 @@ func TestFrontendStaticAccessibilityContract(t *testing.T) {
 		t.Error("subtle text color token is missing")
 	}
 	for _, selector := range []string{
-		".flow .flow-arrow",
 		"label span",
 		"input::placeholder,textarea::placeholder",
 		".card-footnote",
@@ -899,5 +898,136 @@ func TestFrontendMobileComposerHintStaysOneLine(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\.composer-hint\s*\{[^}]*white-space:nowrap`).MatchString(m) {
 		t.Error("the composer hint row can still wrap on phones")
+	}
+}
+
+func TestFrontendShipsItsOwnFonts(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := string(css)
+	for _, family := range []string{"Instrument Sans", "JetBrains Mono"} {
+		block := regexp.MustCompile(`@font-face\s*\{[^}]*font-family:\s*"` + family + `"[^}]*\}`).FindString(style)
+		if block == "" {
+			t.Errorf("no @font-face for %s", family)
+			continue
+		}
+		if !strings.Contains(block, "font-display:swap") || !regexp.MustCompile(`url\(/fonts/[a-z-]+\.woff2\)`).MatchString(block) {
+			t.Errorf("@font-face for %s lacks font-display:swap or a /fonts/ woff2 url", family)
+		}
+	}
+	if !strings.Contains(style, `font-family:"Instrument Sans"`) || !strings.Contains(style, `--mono:"JetBrains Mono"`) {
+		t.Error(":root lacks the Instrument Sans body face or the --mono token")
+	}
+	for _, m := range regexp.MustCompile(`[^\n]*font:[^;]*\bmonospace[^\n]*`).FindAllString(style, -1) {
+		if !strings.Contains(m, "--mono:") {
+			t.Errorf("monospace font rule outside --mono: %s", m)
+		}
+	}
+	if strings.Contains(style, "Inter") {
+		t.Error("style.css still mentions Inter")
+	}
+	html, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(html), `<link rel="preload" href="/fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>`) {
+		t.Error("index.html does not preload the Instrument Sans latin subset")
+	}
+	files, _, _, err := Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fonts/instrument-sans-latin.woff2", "fonts/jetbrains-mono-latin.woff2"} {
+		if len(files[name]) != 64 {
+			t.Errorf("manifest lacks %s", name)
+		}
+	}
+}
+
+func TestFrontendNoArrowGlyphs(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+	for name, text := range map[string]string{"index.html": html, "app.js": js} {
+		if strings.Contains(text, "↗") {
+			t.Errorf("%s still contains the arrow glyph", name)
+		}
+	}
+	for _, want := range []string{">Create room</button>", ">End the chat for both</button>"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %q", want)
+		}
+	}
+	for _, want := range []string{"copy.textContent = 'Copy link';", "'Link copied'"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("app.js lacks %q", want)
+		}
+	}
+	if strings.Count(js, "'Copy link'") < 2 {
+		t.Error("copy feedback reset must set 'Copy link' again")
+	}
+	if !regexp.MustCompile(`::selection\s*\{[^}]*var\(--accent\)`).MatchString(css) {
+		t.Error("style.css lacks an accent ::selection rule")
+	}
+	if !strings.Contains(css, "caret-color:var(--accent)") {
+		t.Error("style.css lacks caret-color:var(--accent)")
+	}
+	disabled := regexp.MustCompile(`\.send-button:disabled\s*\{[^}]*\}`).FindString(css)
+	if disabled == "" {
+		t.Fatal("no .send-button:disabled rule")
+	}
+	if m := regexp.MustCompile(`background:([^;}]*)`).FindStringSubmatch(disabled); m == nil || strings.Contains(m[1], "var(--accent)") {
+		t.Errorf("disabled send background must not be the accent: %s", disabled)
+	}
+	if !strings.Contains(disabled, "border:1px solid var(--muted-subtle)") {
+		t.Errorf("disabled send needs a --muted-subtle border: %s", disabled)
+	}
+	if strings.Contains(disabled, "opacity:.45") {
+		t.Errorf("disabled send keeps opacity:.45: %s", disabled)
+	}
+	for _, gone := range []string{".flow-arrow", ".card-symbol", ".primary span"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("style.css still styles %s", gone)
+		}
+	}
+}
+
+func TestFrontendSentCheckAndSameTabLinks(t *testing.T) {
+	appBytes, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := string(appBytes)
+	for _, want := range []string{`from './nav.js'`, `addEventListener('hashchange'`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+	i := strings.Index(app, `addEventListener('hashchange'`)
+	if i < 0 {
+		t.FailNow()
+	}
+	listener := app[i:]
+	listener = listener[:strings.Index(listener, "\n});")]
+	for _, want := range []string{`event.oldURL`, `event.newURL`, `needsReload(`, `location.reload()`} {
+		if !strings.Contains(listener, want) {
+			t.Errorf("hashchange listener lacks %s", want)
+		}
+	}
+	body := funcBody(t, app, "function buildMessage")
+	for _, want := range []string{`self && status === 'accepted'`, `createElementNS('http://www.w3.org/2000/svg'`, `'aria-label', 'Sent'`, "article.dataset.key = `${message.sender_id}:${message.client_message_id}`;"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("buildMessage lacks %s", want)
+		}
+	}
+	if strings.Contains(body, "dataset.group += `|${time.textContent}`") == false {
+		t.Error("the sent check must not change the grouping key")
 	}
 }

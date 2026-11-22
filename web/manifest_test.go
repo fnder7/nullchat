@@ -10,7 +10,7 @@ func TestManifestCoversEmbeddedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"index.html", "app.js", "crypto.js", "keystore.js", "linkify.js", "style.css", "trust.js", "invite.js", "favicon.svg"} {
+	for _, name := range []string{"index.html", "app.js", "crypto.js", "keystore.js", "linkify.js", "style.css", "trust.js", "nav.js", "invite.js", "favicon.svg", "fonts/instrument-sans-latin.woff2", "fonts/instrument-sans-latin-ext.woff2", "fonts/jetbrains-mono-latin.woff2", "fonts/jetbrains-mono-latin-ext.woff2"} {
 		if len(files[name]) != 64 {
 			t.Errorf("%s: missing or malformed hash %q", name, files[name])
 		}
