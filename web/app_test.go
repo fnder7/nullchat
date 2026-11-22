@@ -570,8 +570,16 @@ func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {
 	if strings.Contains(funcBody(t, text, "function buildVerified("), "state.trustOpen = true") {
 		t.Error("Compare again leaves trustOpen stuck")
 	}
-	if !strings.Contains(page, `<section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><p>End-to-end encrypted in your browser.</p></section>`) {
-		t.Error("the sidebar encryption note is wrong")
+	panel := page[strings.Index(page, `<section id="safety-panel"`):]
+	panel = panel[:strings.Index(panel, "</section>")]
+	for _, want := range []string{`class="safety-panel"`, `<svg class="safety-icon" aria-hidden="true"`, `<strong>End-to-end encrypted</strong>`,
+		`<p>Messages are locked in this browser before they are sent. The server only sees ciphertext.</p>`} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("the sidebar encryption note lacks %q", want)
+		}
+	}
+	if strings.Contains(panel, "eyebrow") {
+		t.Error("the encryption note still uses an eyebrow label")
 	}
 
 	for _, copy := range []string{"Is this really them?", "Compare this code with your contact by voice or in another app. If it matches, you are talking to the right person.",
@@ -875,5 +883,21 @@ func TestFrontendMobileFieldsAvoidIOSZoom(t *testing.T) {
 	}
 	if !strings.Contains(rule, "font-size:16px") {
 		t.Error("field rule is not 16px")
+	}
+}
+
+// On a phone the keyboard-shortcut hint wrapped onto two lines and pushed the message
+// counter around; there is no Shift key there, so it is hidden and the row stays one line.
+func TestFrontendMobileComposerHintStaysOneLine(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := mobileCSS(t, string(css))
+	if !regexp.MustCompile(`\.composer-hint>span:first-child\s*\{\s*display:none`).MatchString(m) {
+		t.Error("the shortcut hint is not hidden on phones")
+	}
+	if !regexp.MustCompile(`\.composer-hint\s*\{[^}]*white-space:nowrap`).MatchString(m) {
+		t.Error("the composer hint row can still wrap on phones")
 	}
 }
