@@ -225,6 +225,25 @@ Desktop sidebar (260px, 220px at 1050) and mobile sheet are the same DOM (`#room
 | SHEET-10 | Open the sheet in the iOS Simulator (iPhone 17) as the guest with ⋯. | Heading "Participants" with both names (no status, both present), the encryption section, the notifications line and a full-width End button, all in view above the Safari bar. Walked. The alone state ("Waiting for your contact") on iOS was not walked; the simulator was the guest. |
 | SHEET-11 | Run the impeccable detector on `web/index.html`. | No `kicker-above-heading` finding inside `#chat`. Walked: only home findings remain (eyebrow chip, tiny-text, undersized-ui-text, aphoristic-cadence), left for the home MR. |
 
+### Home and guest screen
+
+Walked 2026-11-22 against the rebuilt Docker image (`/app.js` and `/style.css` shasums equal `web/`), built-in browser, and iOS Simulator (iPhone 17). Each case names the viewport it was walked at.
+
+| ID | Preconditions and steps | Expected result |
+|---|---|---|
+| HOME-01 | Measure the minimum computed `font-size` of visible text on home at 1280, 375 and 320. | At least 12px everywhere (minimum 12px: the 01/02/03 flow numbers and, at 1280, `.header-note`). Walked at 1280, 375 and 320. |
+| HOME-02 | Read home for the removed labels. | No "A PRIVATE SPACE, FOR A WHILE" or "NEW CONVERSATION" eyebrow and no `/ 01 / 02 / 03` principle numbers; the 01/02/03 flow keeps its numbers. Walked at 1280 (screenshot), 375 (text) and 320 (screenshot). |
+| HOME-03 | Compute `letter-spacing` of the home headings. | `h1` -0.04em (-2.87px at 71.68px; -2.32px at 58px), `#card-title` -0.03em (-0.81px at 27px). Walked at 1280, 375 and 320. |
+| HOME-04 | At 375 and 320 read `h1` and `#create-button` `getBoundingClientRect().top`. | `h1` top 140px at 375 and 320; `#create-button` top 830px at 375 (viewport 812) and 863px at 320 (viewport 700), so the button is below the first screen and the form is reached by scrolling. At 1280: `h1` 223px, button 587px (visible). Reported, not judged. |
+| HOME-05 | Compute `text-align` of `#create-button` and look at the full-width `.primary` buttons. | Centred. Walked at 1280, 375, 320 (home) and the guest "Join the conversation" button at 320 and in iOS (screenshot). |
+| HOME-06 | Read the footer on home and on the guest screen. | "nullchat © 2026" and "History is available to participants until the room closes."; no /healthz link, no third "End-to-end encrypted". At 1280 the two spans sit on one row (left edge 64, right edge 1216, flex); at 375 and 320 they stack, both at x 20. Walked at 1280 (home measured, guest screenshot), 375 (home and guest measured) and 320 (guest screenshot, home measured). |
+| HOME-07 | Read the title field on home. | Placeholder "e.g. Weekend plans". Walked at 1280, 320 and in iOS (screenshot). |
+| HOME-08 | Create a room with the title left empty. Check `document.title`, `#chat-head-title` and the sheet title. | All read "Private conversation" (`document.title` "Private conversation · nullchat"). Walked at 1280 (all three values) and 375 (head visible 229px wide, sheet opened, title visible; no horizontal overflow). |
+| HOME-09 | Open a guest invite link and measure `#invite-title`. | "You're invited to a private conversation", `letter-spacing` -0.02em (-0.48px at 24px), two lines at 1280, 375 and 320, no horizontal overflow, minimum font 12px. Walked at all three. |
+| HOME-10 | Open home and a guest invite in the iOS Simulator (iPhone 17, Safari). | Home hero, flow, form and placeholder render; the guest heading's letters no longer touch. Walked (screenshots, 402pt wide). Not walked: other iOS devices, landscape. |
+| HOME-11 | Run the impeccable detector on `web/index.html`. | No `tiny-text`, `undersized-ui-text`, `hero-eyebrow-chip` or `kicker-above-heading` finding. One finding remains: aphoristic-cadence, "4 aphoristic constructions: \"Just talk . No profile.\"" (copy left unchanged). Walked. |
+| HOME-12 | Check the home and guest screens at 1050 and at 768. | Not walked. |
+
 ## Report template
 
 ```text
