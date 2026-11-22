@@ -1,11 +1,28 @@
-# nullchat
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="nullchat — end-to-end encrypted, self-destructing chat for two" width="100%">
+</p>
 
-**An end-to-end encrypted, self-destructing chat for two. No sign-up, no accounts, no plaintext on the server.**
+<p align="center">
+  <a href="https://nullchat-xdgz.onrender.com"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-nullchat-ccf88b?style=flat-square&labelColor=111514"></a>
+  <img alt="Go 1.25" src="https://img.shields.io/badge/Go-1.25-ccf88b?style=flat-square&logo=go&logoColor=ccf88b&labelColor=111514">
+  <img alt="PostgreSQL 17" src="https://img.shields.io/badge/PostgreSQL-17-ccf88b?style=flat-square&logo=postgresql&logoColor=ccf88b&labelColor=111514">
+  <img alt="E2EE: AES-256-GCM + ECDH P-256" src="https://img.shields.io/badge/E2EE-AES--256--GCM%20%C2%B7%20ECDH%20P--256-ccf88b?style=flat-square&labelColor=111514">
+  <a href="https://github.com/fnder7/nullchat/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/fnder7/nullchat/ci.yml?branch=main&style=flat-square&label=CI&labelColor=111514"></a>
+</p>
 
-**Live demo:** https://nullchat-xdgz.onrender.com
-<sub>Hosted on Render's free plan: the first request after a quiet period can take up to a minute while the service wakes up.</sub>
+<p align="center">
+  <b>No sign-up, no accounts, no plaintext on the server.</b><br>
+  Create a room → send the one-time link → talk until the timer runs out.
+</p>
 
-Create a room → send the one-time link → talk until the timer runs out.
+<p align="center">
+  <a href="https://nullchat-xdgz.onrender.com"><b>Try the live demo →</b></a><br>
+  <sub>Free Render plan: the first request after a quiet period can take up to a minute while the service wakes up.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshot.png" alt="nullchat start screen: create a room for two with a timer and an optional password" width="860">
+</p>
 
 ## Features
 
