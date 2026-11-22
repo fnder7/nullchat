@@ -160,7 +160,8 @@ function renderParticipants() {
     if (p.id === state.self.id) { const tag = document.createElement('small'); tag.textContent = 'you'; li.append(tag); }
     $('participants').append(li);
   }
-  $('participants-status').textContent = state.room.participants.length === 1 && !state.ended ? 'Waiting for your contact' : '';
+  const status = state.room.participants.length === 1 && !state.ended ? 'Waiting for your contact' : '';
+  if ($('participants-status').textContent !== status) $('participants-status').textContent = status; // a rewrite may be re-announced
   renderTrust();
 }
 // The strip above the log. The body is rebuilt only when the derived state changes, so
@@ -471,7 +472,7 @@ function connection(connected, label) {
 function finish(label) {
   state.ended = true;
   $('chat').classList.add('ended');
-  $('participants-status').textContent = '';
+  if ($('participants-status').textContent) $('participants-status').textContent = '';
   closeSheet({ restoreFocus: false });
   if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);

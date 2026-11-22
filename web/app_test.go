@@ -1105,6 +1105,12 @@ func TestFrontendSheetParticipantsAndCounter(t *testing.T) {
 	if !strings.Contains(rp, "'Waiting for your contact'") || !strings.Contains(rp, "state.ended") {
 		t.Error("renderParticipants does not set the waiting status only while open")
 	}
+	if !strings.Contains(rp, "$('participants-status').textContent !== status") {
+		t.Error("renderParticipants rewrites the status even when unchanged")
+	}
+	if !regexp.MustCompile(`\.participants-title\s*\{[^}]*color:var\(--text\)`).MatchString(css) {
+		t.Error(".participants-title is not the default text colour")
+	}
 	if strings.Contains(rp, ".focus(") {
 		t.Error("renderParticipants moves focus")
 	}
