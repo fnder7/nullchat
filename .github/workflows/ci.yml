@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: node --test web/crypto.test.mjs web/linkify.test.mjs web/trust.test.mjs
+      - run: node --test web/crypto.test.mjs web/linkify.test.mjs web/trust.test.mjs web/invite.test.mjs
       - run: go test -race ./...
       - run: go vet ./...
       - run: go build ./cmd/server

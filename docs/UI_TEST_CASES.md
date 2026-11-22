@@ -53,6 +53,30 @@ API and WebSocket as observed through the interface.
 | JOIN-05 | Copy a `#room=...` URL into a new independent context. | Without a saved session, no access to the room or its history is granted. |
 | JOIN-06 | Reload a participant's tab. | Their session, name and the "you" marker are preserved. |
 
+### Guest screen
+
+An invite link (`#invite=…`) opens `#invite`, a dedicated guest screen, instead of the home page. The server never says why a link cannot be opened, so the closed state covers every cause with one text.
+
+| ID | Preconditions and steps | Expected result |
+|---|---|---|
+| GUEST-01 | Open a valid link without a password. | The heading "You're invited to a private conversation", the three facts, **Join the conversation** and **Or create your own room**. No creator hero, no principles strip, no password field. |
+| GUEST-02 | Open a valid link with a password (`pw=1`). | The same screen plus the field "Room password" and its hint. |
+| GUEST-03 | At 375px width, open GUEST-01 and GUEST-02 and compare the Join button's `getBoundingClientRect().bottom` with `innerHeight`. | Join is inside the first viewport without scrolling; no horizontal scroll. |
+| GUEST-04 | On a link without a password, press **Join the conversation**. | The guest joins; the chat opens with `2 / 2`; the fragment becomes `#room=…`. |
+| GUEST-05 | On a password link, submit an empty field. | "Enter the room password." under the field; `aria-invalid="true"`; `aria-describedby` includes the message; focus is in the field; no join request is sent. |
+| GUEST-06 | Type a wrong password and press Enter. | Enter submits. "Wrong password, or the link is damaged. After 5 wrong attempts the link stops working." under the field; `aria-invalid="true"`; focus in the field; the screen stays in `ready`. |
+| GUEST-07 | After GUEST-06, edit the field. | The error text is removed, `aria-invalid` is gone and `aria-describedby` points at the hint only. |
+| GUEST-08 | Enter the correct password and press **Join the conversation**. | The guest joins and the chat opens. |
+| GUEST-09 | Open an already-used link. | "This link can't be opened", the spec's two paragraphs, the link "Create your own room" to `/`, no Join button; focus on `#invite-title`. The same text is shown for a revoked, closed or unknown invite. |
+| GUEST-10 | Open a link whose `k` is truncated. | "This link is incomplete" at once, focus on `#invite-title`, no Join button, the link "Create your own room" to `/`, no `/api/` request. |
+| GUEST-11 | Open a link whose token is 63 characters. | The same as GUEST-10 (including the "Create your own room" link), with no `/api/` request. |
+| GUEST-12 | Open a link on a non-secure origin (no `crypto.subtle`). | "Open this link over HTTPS", no button, no request. Not observed in the browser (`127.0.0.1` is a secure context): the state mapping and copy are asserted in invite.test.mjs and app_test.go; the UI behaviour is not exercised in a browser. |
+| GUEST-13 | Cause `rate_limited`, `database_unavailable`, `capacity_reached` or a network failure on join. | The screen stays in `ready`; the message sits under the button; the button is enabled for a retry. Not observed in the browser: the state mapping and copy are asserted in invite.test.mjs and app_test.go; the UI behaviour is not exercised in a browser. |
+| GUEST-14 | Open the home page without a fragment. | Unchanged: "A place for two" card, no invite panel, `#invite` hidden. |
+| GUEST-15 | Check the console and the Network tab over GUEST-01…11. | No JS errors. The only failed request is the expected `410` for a used link. |
+| GUEST-16 | Open a fresh link without a password whose `k` is changed to another valid 43-character base64url value, then press **Join the conversation**. | The server answers `join_proof_invalid`. There is no field, so "Wrong password, or the link is damaged. After 5 wrong attempts the link stops working." appears under the button in `#join-error` (`role="alert"`); the screen stays in `ready` and the button is enabled. Each try counts toward the 5 attempts. |
+| GUEST-17 | At desktop width (1024x768), open a valid link with a password, one without, and a used link. | The card is centred (equal side margins), no horizontal scroll, Join is visible without scrolling; the used link shows the closed state with no Join button. |
+
 ### Trust strip and safety-code verification
 
 The strip (`#trust-strip`) sits above the messages; the badge (`#trust-badge`) sits in the conversation header. Verification status is local to each browser and is never sent to the other participant.

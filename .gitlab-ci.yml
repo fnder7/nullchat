@@ -31,7 +31,7 @@ go-checks:
     - go test -race ./...
     - go vet ./...
     - node --check web/app.js
-    - node --test web/crypto.test.mjs web/linkify.test.mjs web/trust.test.mjs
+    - node --test web/crypto.test.mjs web/linkify.test.mjs web/trust.test.mjs web/invite.test.mjs
     - go build -buildvcs=false ./cmd/server ./cmd/migrate
     - go run ./cmd/webhash
     - go test -tags=integration -race ./internal/storage/postgres

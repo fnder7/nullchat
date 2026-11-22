@@ -130,7 +130,6 @@ func TestFrontendUsesOperationSpecificErrors(t *testing.T) {
 		"async function api(path, data, token, key = '', errorOverrides = {})",
 		"errorOverrides[result.error] || errors[result.error] || 'The request failed. Please try again.'",
 		"api('/api/v1/rooms', request.body, '', request.key, { database_unavailable: 'The server is temporarily unavailable. The room was not created, please try again.' })",
-		"api('/api/v1/join', request.body, '', request.key, { invalid_input: 'This invite is not valid. Check the link or ask for a new one.' })",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("frontend lacks operation-specific error contract: %q", required)
@@ -164,7 +163,6 @@ func TestFrontendReusesPreparedIdempotentRequests(t *testing.T) {
 		"if (prepared.create) return prepared.create;",
 		"if (prepared.join) return prepared.join;",
 		"for (const id of ['title', 'ttl', 'password']) $(id).addEventListener('input', () => { prepared.create = null; });",
-		"$('join-password').addEventListener('input', () => { prepared.join = null; });",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("frontend lacks prepared-request contract: %q", required)
@@ -365,6 +363,138 @@ func funcBody(t *testing.T, text, name string) string {
 	}
 	body := text[i:]
 	return body[:strings.Index(body, "\n}\n")]
+}
+
+func TestFrontendInviteHasItsOwnScreen(t *testing.T) {
+	htmlBytes, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBytes)
+	if !strings.Contains(html, `<main id="invite"`) {
+		t.Fatal(`index.html lacks <main id="invite"`)
+	}
+	if strings.Contains(html, `id="invite-panel"`) {
+		t.Error("the create card still carries #invite-panel")
+	}
+	home := strings.Index(html, `<main id="home"`)
+	homeEnd := home + strings.Index(html[home:], "</main>")
+	if invite := strings.Index(html, `<main id="invite"`); invite < homeEnd {
+		t.Error("#invite sits inside #home")
+	}
+	if !strings.Contains(html, `<h1 id="invite-title" tabindex="-1"`) {
+		t.Error("#invite-title is not focusable with tabindex=-1")
+	}
+	if !strings.Contains(html, `<form id="create-form">`) {
+		t.Error("create form changed or left #home")
+	}
+	jsBytes, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(jsBytes)
+	for _, required := range []string{
+		"from './invite.js'", "function renderInvite(",
+		"You're invited to a private conversation",
+		"This link holds one seat and works once. When you join, the room opens for the two of you.",
+		"Messages are encrypted in your browser. The server only sees ciphertext.",
+		"The room closes by itself when its time runs out.",
+		"No sign-up, no profile.",
+		"Room password",
+		"The person who invited you should send it separately from the link.",
+		"Join the conversation", "Or create your own room",
+		"This link can't be opened",
+		"It may have been used already, turned off after wrong passwords, or the conversation is over. For privacy, nullchat doesn't say which.",
+		"If you haven't opened this link before, tell the person who sent it, using a different app, and ask for a new one.",
+		"Create your own room",
+		"This link is incomplete",
+		"Part of the link is missing. Ask for the full link again, and copy it in one piece.",
+		"Open this link over HTTPS",
+		"Encryption only works on a secure connection. Open the link at its https:// address.",
+	} {
+		if !strings.Contains(js, required) {
+			t.Errorf("app.js lacks guest copy %q", required)
+		}
+	}
+	render := funcBody(t, js, "function renderInvite(")
+	for _, required := range []string{"type = 'submit'", "join-form"} {
+		if !strings.Contains(render, required) {
+			t.Errorf("renderInvite lacks %q", required)
+		}
+	}
+	if !strings.Contains(funcBody(t, js, "async function enter("), "$('invite').hidden = true") {
+		t.Error("enter() does not hide #invite")
+	}
+	for _, gone := range []string{"$('join-button').addEventListener", "params.has('invite')) {\n    $('create-form')", "invite-panel"} {
+		if strings.Contains(js, gone) {
+			t.Errorf("app.js still has the old invite flow: %q", gone)
+		}
+	}
+}
+
+func TestFrontendJoinFlowOnGuestScreen(t *testing.T) {
+	source, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(source)
+	if !strings.Contains(funcBody(t, js, "async function api("), ".code = result.error") {
+		t.Error("api() does not attach the server code to the error")
+	}
+	submit := funcBody(t, js, "async function submitJoin(")
+	if !strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(submit, "async function submitJoin(event) {")), "event.preventDefault();") {
+		t.Error("submitJoin must call event.preventDefault() first")
+	}
+	for _, required := range []string{
+		"button.disabled) return",
+		"'Joining…'", "Joining the conversation…",
+		"api('/api/v1/join', request.body, '', request.key)",
+		"joinOutcome(", "renderInvite('closed')", "renderInvite('damaged')", "showJoinFieldError(",
+		"password_empty", "Wrong password, or the link is damaged. After 5 wrong attempts the link stops working.", "Enter the room password.",
+	} {
+		if !strings.Contains(submit, required) {
+			t.Errorf("submitJoin lacks %q", required)
+		}
+	}
+	if strings.Count(submit, "prepared.join = null") != 1 {
+		t.Error("prepared.join must be cleared exactly once, after success, never on a transient error")
+	}
+	if strings.Index(submit, "prepared.join = null") < strings.Index(submit, "await enter(") {
+		t.Error("prepared.join is cleared before enter() resolved; a failed enter() must keep the idempotency key")
+	}
+	if strings.Count(submit, "showError('join-field-error')") != strings.Count(submit, "if ($('join-field-error')) showError('join-field-error')") {
+		t.Error("#join-field-error exists only with pw=1; clearing it in submitJoin must be guarded")
+	}
+	for _, required := range []string{"removeAttribute('aria-invalid')", "readOnly = true", "readOnly = false"} {
+		if !strings.Contains(submit, required) {
+			t.Errorf("submitJoin lacks %q", required)
+		}
+	}
+	field := funcBody(t, js, "function showJoinFieldError(")
+	for _, required := range []string{"join-field-error", "aria-invalid", "aria-describedby", "focus()", "join-error"} {
+		if !strings.Contains(field, required) {
+			t.Errorf("showJoinFieldError lacks %q", required)
+		}
+	}
+	render := funcBody(t, js, "function renderInvite(")
+	for _, required := range []string{"addEventListener('submit', submitJoin)", "prepared.join = null", "removeAttribute('aria-invalid')", "join-field-error"} {
+		if !strings.Contains(render, required) {
+			t.Errorf("renderInvite lacks %q", required)
+		}
+	}
+	if !strings.Contains(render, "fieldError.setAttribute('role', 'alert')") {
+		t.Error("#join-field-error needs role=alert so the error is announced")
+	}
+	if css, err := assets.ReadFile("style.css"); err != nil || !strings.Contains(string(css), `#join-password[aria-invalid="true"]`) {
+		t.Error("style.css lacks the invalid style for #join-password")
+	}
+	if !strings.Contains(js, "import { linkState, joinOutcome } from './invite.js'") {
+		t.Error("app.js does not import joinOutcome")
+	}
+	prep := funcBody(t, js, "async function prepareJoin(")
+	if !strings.Contains(prep, "$('join-password')?.value") || !strings.Contains(prep, "'password_empty'") {
+		t.Error("prepareJoin must read the optional field and flag an empty password with code password_empty")
+	}
 }
 
 func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {

@@ -365,11 +365,82 @@ footer>span:first-child {
   white-space:nowrap;
 }
 
-.invite-copy {
+.invite-screen {
+  display:flex;
+  justify-content:center;
+  padding-top:85px;
+}
+
+.invite-card {
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:29px 32px;
+  width:100%;
+  max-width:455px;
+  box-shadow:0 20px 80px #0002;
+}
+
+.invite-card h1 {
+  font-size:24px;
+  line-height:1.3;
+  margin:0 0 14px;
+}
+
+.invite-card h1:focus {
+  outline:none;
+}
+
+.invite-card p {
   color:var(--muted);
   font-size:14px;
   line-height:1.8;
-  margin:25px 0;
+  margin:0 0 16px;
+}
+
+.invite-card p.error {
+  color:var(--error);
+  font-size:12px;
+  margin:12px 0 0;
+}
+
+.invite-card p.sr-only {
+  margin:-1px;
+}
+
+.invite-facts {
+  list-style:none;
+  margin:0 0 22px;
+  padding:0;
+  display:grid;
+  gap:8px;
+  font-size:13px;
+  line-height:1.6;
+  color:var(--muted);
+}
+
+.invite-facts li {
+  padding-left:14px;
+  border-left:1px solid var(--line);
+}
+
+.invite-card .primary {
+  margin-top:8px;
+}
+
+.invite-card .field-hint {
+  margin:-12px 0 19px;
+  font-size:12px;
+}
+
+@media(max-width:700px) {
+  .invite-screen {
+    padding-top:40px;
+  }
+
+  .invite-card {
+    padding:24px 20px;
+  }
 }
 
 .text-link {
@@ -1064,6 +1135,10 @@ footer>span:first-child {
 
 #password,#join-password {
   margin-bottom:19px;
+}
+
+#join-password[aria-invalid="true"] {
+  border-color:var(--error);
 }
 
 .safety-panel {
