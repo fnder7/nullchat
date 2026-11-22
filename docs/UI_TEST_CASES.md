@@ -207,6 +207,24 @@ Run in a browser at `375x812` and `320x700` with two participants (creator and g
 | MOBILE-15 | At ≤ 700px with the sheet closed and open, check where `#timer-alert` is. | It is a child of `#chat`, outside the sheet, so the one-minute warning is announced while the sheet is closed. Walked for placement only (`#timer-alert` parent is `chat`, `room-sheet.contains` is false); the announcement itself at one minute was not exercised. |
 | MOBILE-16 | Hide the chat again (for example `restoreFailed()`). | The `in-chat` class is removed from `body`, so the home page keeps its header. Source test only (`TestFrontendMobileShellLayout`); not walked. |
 
+### Sidebar and sheet
+
+Desktop sidebar (260px, 220px at 1050) and mobile sheet are the same DOM (`#room-sheet`). Walked 2026-11-22 against the rebuilt Docker image (`/app.js` and `/style.css` shasums equal `web/`), built-in browser at 1280, 1050 and 375, two tabs (creator and guest).
+
+| ID | Preconditions and steps | Expected result |
+|---|---|---|
+| SHEET-01 | Open a room in a browser where notification permission is denied. Read `#notify-panel`. | One muted line "Notifications are blocked in this browser."; no `#notify-button` visible, no bordered disabled button. Walked in the denied state (`Notification.permission` was `denied`) at 1280 and in iOS Safari. The granted and default states (button shown) were not walked; source tests only. |
+| SHEET-02 | Read the sheet text. | No "You can reload the tab" note, no YOUR SPACE or PARTICIPANTS eyebrow. Walked at 1280 and in iOS. |
+| SHEET-03 | Read the participants section as creator, alone. | `h3.participants-title` "Participants" in the text colour; `#participants-status` (`role="status"`) reads "Waiting for your contact". Walked at 1280 and 1050. |
+| SHEET-04 | At 375 with the sheet open in the creator tab, have the guest join from another tab. | The status text clears (one mutation, no reload) and focus stays on `#sheet-close`; the two names show. Walked. The screen-reader announcement itself was not walked; the live region role was checked. |
+| SHEET-05 | Send 449 messages from the creator, then one more. | `#message-count` is hidden at 449 and below (checked at 388 and 449); at 450 it reads "450 / 500 messages", 12px, contrast 4.56:1. Walked with a JS loop at 300ms spacing (the server rate limit is 200ms between sends, so 120ms would be rejected). |
+| SHEET-06 | Measure `#end-button` at 1280, 1050 and 375. | `button.danger.end-button`, full width of the sidebar or sheet (260, 220, 335px), 44px tall. "End the chat for both" opens the dialog; Cancel closes it; "End for both" ends the room for both tabs. Walked. Focus after Cancel on mobile is covered by MOBILE-04. |
+| SHEET-07 | Measure the minimum computed `font-size` of visible text inside `#chat` at 1280 and 1050 with messages present. | At least 12px at both (minimum 12px). Walked; also at 375 with the sheet open and closed (12px). |
+| SHEET-08 | At 1050 (220px sidebar), check fit with the End button and heading. | No horizontal overflow (`scrollWidth` equals `innerWidth`); the heading, status and End button stay inside the 220px sidebar. Walked. |
+| SHEET-09 | Check the Sent check on a sent message. | The svg has `aria-hidden="true"` and an `.sr-only` "Sent" sits next to it. Walked at 1050. |
+| SHEET-10 | Open the sheet in the iOS Simulator (iPhone 17) as the guest with ⋯. | Heading "Participants" with both names (no status, both present), the encryption section, the notifications line and a full-width End button, all in view above the Safari bar. Walked. The alone state ("Waiting for your contact") on iOS was not walked; the simulator was the guest. |
+| SHEET-11 | Run the impeccable detector on `web/index.html`. | No `kicker-above-heading` finding inside `#chat`. Walked: only home findings remain (eyebrow chip, tiny-text, undersized-ui-text, aphoristic-cadence), fixed in the home MR. |
+
 ## Report template
 
 ```text
