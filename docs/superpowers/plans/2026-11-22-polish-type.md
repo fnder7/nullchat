@@ -78,6 +78,7 @@
 - [ ] **Step 2: Run to verify it fails.** Run `go test ./web/ -run TestFrontendNoArrowGlyphs`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - Remove the `.flow-arrow` spans, the `.card-symbol` span and the `<span>↗</span>` in the create button, together with their CSS.
+  - The footer link text becomes "Server status" without the glyph. MR 3 removes that link entirely.
   - The disabled send button gets the line-colour background and a muted icon colour.
 - [ ] **Step 4: Run to verify it passes.** Run the full pre-commit line. Expected: PASS.
 - [ ] **Step 5: Commit** `fix(web): drop the arrow glyph, theme selection and caret, neutral disabled send`
