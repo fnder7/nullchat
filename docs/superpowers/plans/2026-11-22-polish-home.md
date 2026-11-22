@@ -19,7 +19,7 @@
 
 - Branch `feat/polish-home` from `main` after MR 2 is merged and deployed. One MR.
 - **Copy:**
-  - footer: "nullchat © 2026" and "History lasts only until the room closes.";
+  - footer: "nullchat © 2026" and "History is available to participants until the room closes.";
   - title placeholder: "e.g. Weekend plans";
   - default title: "Private conversation".
 - **Tracking:** every `letter-spacing` is an em value no tighter than `-0.04em`.
@@ -66,7 +66,7 @@
 **Interfaces:** `DEFAULT_TITLE = 'Private conversation'`.
 
 - [ ] **Step 1: Write the failing test** `TestFrontendFooterAndDefaultTitle`. It asserts:
-  - **Footer.** `index.html` has no `/healthz` and contains `History lasts only until the room closes.`. The `<footer>` contains `End-to-end` zero times.
+  - **Footer.** `index.html` has no `/healthz` and contains `History is available to participants until the room closes.`. The `<footer>` contains `End-to-end` zero times.
   - **Placeholder.** `placeholder="e.g. Weekend plans"`.
   - **Default title.** `app.js` has `DEFAULT_TITLE = 'Private conversation'`, and `Quiet conversation` appears nowhere in `index.html` or `app.js`. The `|| DEFAULT_TITLE` fallback stays, so a typed title is kept as is (Review Focus 2).
 - [ ] **Step 2: Run to verify it fails.** Run `go test ./web/ -run TestFrontendFooterAndDefaultTitle`. Expected: FAIL.

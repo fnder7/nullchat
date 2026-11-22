@@ -8,7 +8,7 @@ import { trustState, badge, collapsible, inviteURL, codeLabel } from './trust.js
 const $ = (id) => document.getElementById(id);
 const MOBILE = matchMedia('(max-width:700px)');
 const MAX_RECONNECT_ATTEMPTS = 8;
-const DEFAULT_TITLE = 'Quiet conversation';
+const DEFAULT_TITLE = 'Private conversation';
 const state = {
   credentials: null, socket: null, room: null, self: null, invite: '', inviteShown: '',
   // e2ee: what survives reload in sessionStorage. Keys live in IndexedDB (keystore.js).

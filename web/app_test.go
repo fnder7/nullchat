@@ -29,7 +29,6 @@ func TestFrontendStaticAccessibilityContract(t *testing.T) {
 		"label span",
 		"input::placeholder,textarea::placeholder",
 		".card-footnote",
-		".principle-num",
 	} {
 		t.Run(selector, func(t *testing.T) {
 			declaration := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*color:\s*var\(--muted-subtle\)\s*;`)
@@ -109,8 +108,8 @@ func TestFrontendCopyMatchesPersistenceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "History is available to participants until the room closes. End-to-end encrypted: the server sees only ciphertext.") {
-		t.Fatal("footer does not describe the persistence and encryption contract")
+	if !strings.Contains(text, "History is available to participants until the room closes.") {
+		t.Fatal("footer does not describe the persistence contract")
 	}
 	if strings.Contains(text, "No E2EE") {
 		t.Fatal("footer still claims there is no end-to-end encryption")
@@ -1193,22 +1192,106 @@ func TestFrontendNoSmallTextOutsideHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Home and footer selectors only; nothing on the chat screen or the sidebar.
-	homeOnly := map[string]bool{
-		".eyebrow":       true,
-		".flow span":     true,
-		".flow b":        true,
-		".small-print":   true,
-		"label span":     true,
-		".room-facts":    true,
-		".card-footnote": true,
-		".principle-num": true,
-		".principles p":  true,
-		"footer":         true,
-	}
+	// No allowlist: nothing on any screen sets text below 12px.
 	for _, selector := range smallFontRules(string(css)) {
-		if !homeOnly[selector] {
-			t.Errorf("%s sets text below 12px outside the home page", selector)
+		t.Errorf("%s sets text below 12px", selector)
+	}
+}
+
+func TestSmallFontRulesHelper(t *testing.T) {
+	cases := []struct {
+		name, css string
+		want      []string
+	}{
+		{"shorthand below 12px", `a{font:700 10px var(--mono)}`, []string{"a"}},
+		{"nested media", `@media(max-width:700px){ .p { font-size: 9px } }`, []string{".p"}},
+		{"inside a comment", `/* .x{font-size:9px} */ y{color:red}`, nil},
+		{"12px", `b{font-size:12px}`, nil},
+		{"14px with line height", `c{font:14px/1.2 x}`, nil},
+	}
+	for _, c := range cases {
+		got := smallFontRules(c.css)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestFrontendHomeHasNoEyebrows(t *testing.T) {
+	html, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`class="eyebrow"`, "principle-num", "card-eyebrow", "card-top"} {
+		if strings.Contains(string(html), s) {
+			t.Errorf("index.html still contains %s", s)
+		}
+	}
+	js, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(js), "card-eyebrow") {
+		t.Error("app.js still references card-eyebrow")
+	}
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := regexp.MustCompile(`letter-spacing\s*:\s*([^;}]+)`).FindAllStringSubmatch(string(css), -1)
+	if len(values) == 0 {
+		t.Fatal("no letter-spacing found")
+	}
+	em := regexp.MustCompile(`^(-?\d*\.?\d+)em$`)
+	for _, v := range values {
+		m := em.FindStringSubmatch(strings.TrimSpace(v[1]))
+		if m == nil {
+			t.Errorf("letter-spacing %q is not an em value", v[1])
+			continue
+		}
+		if n, _ := strconv.ParseFloat(m[1], 64); n < -0.04 {
+			t.Errorf("letter-spacing %q is tighter than -0.04em", v[1])
+		}
+	}
+	if !regexp.MustCompile(`\.primary\s*\{[^}]*justify-content:center`).MatchString(string(css)) {
+		t.Error(".primary does not centre its label")
+	}
+}
+
+func TestFrontendFooterAndDefaultTitle(t *testing.T) {
+	htmlBytes, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBytes, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, js := string(htmlBytes), string(jsBytes)
+	if strings.Contains(html, "/healthz") {
+		t.Error("footer still links to /healthz")
+	}
+	if !strings.Contains(html, "History is available to participants until the room closes.") {
+		t.Error("footer lacks the honest history line")
+	}
+	start := strings.Index(html, "<footer")
+	end := strings.Index(html, "</footer>")
+	if start < 0 || end < start {
+		t.Fatal("footer not found")
+	}
+	if strings.Contains(html[start:end], "End-to-end") {
+		t.Error("footer still repeats the end-to-end claim")
+	}
+	if !strings.Contains(html, `placeholder="e.g. Weekend plans"`) {
+		t.Error("title placeholder is not the example")
+	}
+	if !strings.Contains(js, "DEFAULT_TITLE = 'Private conversation'") {
+		t.Error("default title is not Private conversation")
+	}
+	if !strings.Contains(js, "|| DEFAULT_TITLE") {
+		t.Error("default title fallback is gone")
+	}
+	if strings.Contains(html, "Quiet conversation") || strings.Contains(js, "Quiet conversation") {
+		t.Error("old default title text remains")
 	}
 }
