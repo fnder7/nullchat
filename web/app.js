@@ -5,6 +5,7 @@ import { linkState, joinOutcome } from './invite.js';
 import { trustState, badge, collapsible, inviteURL, codeLabel } from './trust.js';
 
 const $ = (id) => document.getElementById(id);
+const MOBILE = matchMedia('(max-width:700px)');
 const MAX_RECONNECT_ATTEMPTS = 8;
 const DEFAULT_TITLE = 'Quiet conversation';
 const state = {
@@ -15,7 +16,7 @@ const state = {
   pending: new Map(), failed: new Map(), accepted: new Map(),
   ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0,
   unseen: 0, unread: 0, timerWarned: false, notification: null,
-  trustOpen: false, trustShown: '', safetyCode: undefined,
+  trustOpen: false, composerFocus: false, atBottom: true, trustShown: '', safetyCode: undefined,
 };
 // A create/join request is encrypted once and reused verbatim on retry, so the
 // Idempotency-Key replays the same room with key shares this tab still holds.
@@ -90,9 +91,12 @@ async function enter(credentials, fresh = null) {
   $('home').hidden = true;
   $('invite').hidden = true;
   $('chat').hidden = false;
+  document.body.classList.add('in-chat');
+  syncViewport();
   $('room-title').textContent = state.title;
+  $('chat-head-title').textContent = state.title;
   // The control that had focus is hidden now; without this, focus falls back to <body>.
-  $('room-title').focus();
+  if (MOBILE.matches) $('chat-head-title').focus(); else $('room-title').focus();
   updateTitle();
   await establishKey();
   renderParticipants();
@@ -104,6 +108,7 @@ async function enter(credentials, fresh = null) {
 
 const KEY_NOTE = 'Your contact\'s key was replaced or the link is damaged. Do not continue: end the chat and create a new room.';
 function keyFailure() {
+  closeSheet(); // the open sheet makes .conversation inert, which would silence the alert
   state.keyError = true;
   state.messageKey = null;
   renderTrust();
@@ -165,10 +170,13 @@ const trustNow = () => trustState({
   hasInvite: !!(state.invite && state.e2ee?.secret), code: state.safetyCode, verified: state.e2ee?.verified,
 });
 function renderTrust() {
+  state.composerFocus = document.activeElement === $('message'); // a disabled composer may lose focus without a focusout
   // Two people but no code yet (the key is still being derived): keep what is shown.
   if (!state.ended && !state.keyError && state.room.participants.length > 1 && !state.safetyCode) return;
   const next = trustNow();
-  const shown = collapsible(next) && !state.trustOpen ? 'hidden' : next;
+  // The keyboard needs the room: hide the strip while typing. state.e2ee.verified and state.trustOpen stay as they are.
+  const forComposer = MOBILE.matches && state.composerFocus && ['verify', 'verified', 'later'].includes(next);
+  const shown = forComposer || (collapsible(next) && !state.trustOpen) ? 'hidden' : next;
   const b = badge(next);
   $('trust-badge').hidden = !b;
   if (b) { $('trust-badge').textContent = b.label; $('trust-badge').dataset.tone = b.tone; }
@@ -456,6 +464,8 @@ function connection(connected, label) {
 }
 function finish(label) {
   state.ended = true;
+  $('chat').classList.add('ended');
+  closeSheet({ restoreFocus: false });
   if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);
   connection(false, label);
@@ -473,6 +483,9 @@ function finish(label) {
   $('messages').replaceChildren();
   renderTrust();
   $('end-button').hidden = true;
+  $('chat-head-timer').textContent = 'Ended';
+  $('chat-head-timer').classList.remove('ending');
+  $('sheet-button').hidden = true;
   $('message-form').hidden = true;
   document.querySelector('.composer-hint').hidden = true;
   $('ended-title').textContent = label;
@@ -622,6 +635,8 @@ function updateTimer() {
   $('timer').textContent = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
   $('timer-bar').style.width = `${Math.min(100, remaining / state.totalSeconds * 100)}%`;
   $('timer-card').classList.toggle('ending', remaining <= 60);
+  $('chat-head-timer').textContent = $('timer').textContent;
+  $('chat-head-timer').classList.toggle('ending', remaining <= 60);
   // Announced once; a one-minute room does not need to be told at its start.
   if (remaining <= 60 && !state.timerWarned && state.totalSeconds > 90) {
     state.timerWarned = true;
@@ -682,6 +697,55 @@ const END_COPY = {
   mismatch: "The codes don't match. The person on the other end may not be your contact. End the conversation for both?",
   broken: 'Key verification failed, so this conversation is not safe. End it for both?',
 };
+function openSheet() {
+  const sheet = $('room-sheet');
+  if (sheet.classList.contains('open')) return;
+  sheet.classList.add('open');
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', 'Room details');
+  $('sheet-backdrop').hidden = false;
+  $('sheet-button').setAttribute('aria-expanded', 'true');
+  document.querySelector('.chat-head').inert = true;
+  document.querySelector('.conversation').inert = true;
+  $('sheet-close').focus();
+}
+function closeSheet({ restoreFocus = true } = {}) {
+  const sheet = $('room-sheet');
+  if (!sheet.classList.contains('open')) return;
+  sheet.classList.remove('open');
+  sheet.removeAttribute('role');
+  sheet.removeAttribute('aria-modal');
+  sheet.removeAttribute('aria-label');
+  $('sheet-backdrop').hidden = true;
+  $('sheet-button').setAttribute('aria-expanded', 'false');
+  document.querySelector('.chat-head').inert = false;
+  document.querySelector('.conversation').inert = false;
+  if (restoreFocus) $('sheet-button').focus();
+}
+$('sheet-button').addEventListener('click', () => openSheet());
+$('sheet-close').addEventListener('click', () => closeSheet());
+$('sheet-backdrop').addEventListener('click', () => closeSheet());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('end-dialog').open) closeSheet(); });
+MOBILE.addEventListener('change', () => { if (!MOBILE.matches) closeSheet({ restoreFocus: false }); syncViewport(); });
+// iOS Safari keeps the layout viewport under the keyboard: follow the visual one while the chat is on screen.
+let lastHeight = 0;
+function syncViewport() {
+  const chat = $('chat'), vv = globalThis.visualViewport;
+  if (!vv || chat.hidden || !MOBILE.matches) { chat.style.removeProperty('--app-height'); chat.style.removeProperty('top'); return; }
+  const box = $('messages'), changed = vv.height !== lastHeight;
+  lastHeight = vv.height;
+  chat.style.setProperty('--app-height', `${vv.height}px`);
+  chat.style.top = `${vv.offsetTop}px`;
+  // Android shrinks the layout before this event fires, so use the flag recorded earlier.
+  if (changed && state.atBottom) box.scrollTop = box.scrollHeight;
+}
+if (globalThis.visualViewport) {
+  visualViewport.addEventListener('resize', syncViewport);
+  visualViewport.addEventListener('scroll', syncViewport);
+}
+$('message').addEventListener('focusin', () => { state.atBottom = nearBottom(); state.composerFocus = true; renderTrust(); });
+$('message').addEventListener('focusout', () => { state.composerFocus = false; renderTrust(); });
 let endReturnTo = null;
 function openEndDialog(reason, returnTo) {
   endReturnTo = returnTo;
@@ -745,7 +809,7 @@ function updateComposer() {
   $('byte-count').classList.toggle('over', bytes > e2ee.MAX_TEXT_BYTES);
 }
 $('message').addEventListener('input', () => { $('message').style.height = 'auto'; $('message').style.height = `${Math.min($('message').scrollHeight, 120)}px`; updateComposer(); });
-$('messages').addEventListener('scroll', () => { if (state.unseen && nearBottom()) { state.unseen = 0; showUnseen(); } }, { passive: true });
+$('messages').addEventListener('scroll', () => { state.atBottom = nearBottom(); if (state.unseen && nearBottom()) { state.unseen = 0; showUnseen(); } }, { passive: true });
 $('jump-button').addEventListener('click', () => {
   const box = $('messages');
   box.scrollTo({ top: box.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -888,6 +952,8 @@ if (params.has('invite')) {
   if (params.has('room')) {
     const restoreFailed = () => {
       $('home').hidden = false; $('chat').hidden = true;
+      document.body.classList.remove('in-chat');
+      syncViewport();
       history.replaceState(null, '', '/');
       showError('home-error', 'This tab\'s keys could not be restored. Create a new room.');
     };

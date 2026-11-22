@@ -172,6 +172,29 @@ The strip (`#trust-strip`) sits above the messages; the badge (`#trust-badge`) s
 | VIEW-07 | Compare user-facing texts with the current storage contract. | The UI does not claim that confirmed history is lost on a backend restart if it is stored in PostgreSQL. |
 | VIEW-08 | Run a Lighthouse accessibility audit of the home page. | No failed accessibility audits; interactive elements have consistent visible and accessible names. |
 
+### Mobile chat shell
+
+Run in a browser at `375x812` and `320x700` with two participants (creator and guest via the invite link). Desktop (above 700px) must look and behave as before.
+
+| ID | Preconditions and steps | Expected result |
+|---|---|---|
+| MOBILE-01 | In a room with 30 messages, scroll the message list and try to scroll the page. | Only `.messages` scrolls. `document.scrollingElement.scrollHeight <= innerHeight`; the head, status row and composer do not move. |
+| MOBILE-02 | Tap ⋯ in the head. | The sheet opens with `role="dialog"`, `aria-modal="true"`, `aria-expanded="true"` on ⋯ and focus on ×. `.conversation` and `.chat-head` are `inert`; the backdrop is visible. |
+| MOBILE-03 | Close the sheet with Esc, with ×, and with a backdrop tap (three runs). | The sheet closes, `inert` and the dialog attributes are removed, and focus returns to ⋯. |
+| MOBILE-04 | Open the sheet, tap "End the chat for both", then Cancel. | The end dialog closes, the sheet stays open and focus is on `#end-button`. |
+| MOBILE-05 | Open the sheet, tap End, then "End for both". | The room ends: the head chip reads "Ended" without the `.ending` colour, ⋯ is hidden, the ended panel is shown and the sheet is closed. On mobile the ended panel fills the body (`#chat.ended .messages-wrap` is hidden and the panel is centred between the status row and the bottom). |
+| MOBILE-06 | With the sheet open on the guest, end the room from the creator. | The guest's sheet closes (not inert, no backdrop), the chip reads "Ended", and focus moves to the ended title. |
+| MOBILE-07 | In `verify` with the trust strip open, focus the composer, then blur it. | While focused the strip is hidden and the badge stays; on blur the strip returns. `state.e2ee.verified` and `state.trustOpen` do not change. Walked with real clicks (programmatic `focus()` in an unfocused tab does not fire `focusin`). This case does not cover the on-screen keyboard; see MOBILE-13. |
+| MOBILE-08 | Open the sheet at ≤ 700px, then widen the viewport past 700px. | The sheet closes without moving focus; `inert`, backdrop and dialog attributes are gone and the desktop sidebar is shown. |
+| MOBILE-09 | Measure the minimum computed `font-size` over all visible text inside `#chat` at 375 and 320 widths, with the sheet closed and open. | The minimum is at least 12px. |
+| MOBILE-10 | Open the chat at 1280px wide. | The desktop layout is unchanged: no `.chat-head`, sidebar visible, site header and footer shown, no ⋯, no backdrop. |
+| MOBILE-11 | At 320x700, open the sheet and measure it. | `getBoundingClientRect().height` is below `innerHeight` (max 85%), `#end-button` is inside the viewport (reachable, by scrolling inside the sheet if it overflows), no horizontal overflow. Walked: 1 participant 538px, 2 participants 584px of 700px, End at bottom 676px. |
+| MOBILE-12 | Watch the browser console during MOBILE-01 to MOBILE-11. | No console errors. |
+| MOBILE-13 | On a real iPhone (Safari) and an Android phone (Chrome), focus the composer so the on-screen keyboard opens. | The composer stays above the keyboard; on iOS `--app-height` and `top` on `#chat` follow `visualViewport` height and offsetTop; a list that was at the bottom stays at the bottom after the resize; on Android Chrome `interactive-widget=resizes-content` shrinks the layout viewport. iOS: verified 2026-11-22 in the iOS Simulator (iPhone 17, iOS 27.2, Safari) with the software keyboard: composer and send button above the keyboard, head and badge in place, list kept at the last message, a typed message sent with Return. Fields are 16px at ≤700px so Safari does not zoom on focus (it did at 13px, pushing the badge, send button and ⋯ off screen). Android: not verified (no emulator). |
+| MOBILE-14 | Enter a room (create or join) at ≤ 700px. | Focus lands on `#chat-head-title` (on desktop, on `#room-title`). Walked at 375 and 320 (`document.activeElement.id`); also pinned by a source test. |
+| MOBILE-15 | At ≤ 700px with the sheet closed and open, check where `#timer-alert` is. | It is a child of `#chat`, outside the sheet, so the one-minute warning is announced while the sheet is closed. Walked for placement only (`#timer-alert` parent is `chat`, `room-sheet.contains` is false); the announcement itself at one minute was not exercised. |
+| MOBILE-16 | Hide the chat again (for example `restoreFailed()`). | The `in-chat` class is removed from `body`, so the home page keeps its header. Source test only (`TestFrontendMobileShellLayout`); not walked. |
+
 ## Report template
 
 ```text

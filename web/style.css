@@ -477,6 +477,10 @@ footer>span:first-child {
   margin:20px 0 30px;
 }
 
+.chat-head {
+  display:none;
+}
+
 .timer-card {
   border:1px solid var(--line);
   border-radius:8px;
@@ -947,6 +951,11 @@ footer>span:first-child {
   }
 }
 
+#sheet-close,
+#sheet-backdrop {
+  display:none;
+}
+
 @media(max-width:700px) {
   .shell {
     padding:0 20px;
@@ -1012,87 +1021,156 @@ footer>span:first-child {
   footer a {
     margin-left:auto;
   }
-  /* The sidebar dissolves into the page grid so the conversation can sit right under
-     the room header; reference panels (encryption, notifications) follow it. The invite
-     stays above the conversation: while it is shown, sending it is the next step. */
-  .chat-layout {
-    display:grid;
-    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-    gap:0 20px;
-    align-items:start;
-    padding-top:30px;
-  }
-  .room-sidebar {
-    display:contents;
-  }
-  .conversation {
-    grid-column:1/-1;
-    order:1;
-    margin:20px 0;
-  }
-  .safety-panel,
-  .notify-panel,
-  .sidebar-note,
-  .danger-link {
-    grid-column:1/-1;
-    order:2;
-  }
-  .safety-panel {
-    margin-top:0;
-  }
-  .room-sidebar>.eyebrow {
-    grid-column:1;
-  }
-  .room-sidebar h2 {
-    font-size:22px;
-    margin:10px 0 20px;
-    grid-column:1;
-    grid-row:2;
-  }
-  .timer-card {
-    grid-column:2;
-    grid-row:1/3;
-    padding:13px;
-  }
-  .timer-card strong {
-    font-size:28px;
-    margin:7px 0 10px;
-  }
-  .timer-card>span {
-    font-size:10px;
-  }
-  .participants-heading {
+  /* The chat is a fixed full-height column: head, conversation, composer. The sidebar is
+     the room sheet and stays closed until the sheet opens. */
+  body.in-chat .header,
+  body.in-chat footer {
     display:none;
   }
-  .participants {
-    grid-column:1/-1;
+  #chat {
+    position:fixed;
+    left:0;
+    right:0;
+    top:0;
+    height:var(--app-height,100dvh);
     display:flex;
-    gap:20px;
+    flex-direction:column;
+    gap:0;
+    min-height:0;
+    padding:0 20px;
+    overflow:hidden;
+    background:var(--bg);
   }
-  .participants li {
-    font-size:12px;
+  .chat-head {
+    display:flex;
+    align-items:center;
+    gap:12px;
+    flex:none;
+    height:56px;
   }
-  .participants small {
-    margin-left:0;
+  .chat-head h2 {
+    flex:1;
+    min-width:0;
+    margin:0;
+    font-size:18px;
+    font-weight:500;
+    letter-spacing:-.3px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
   }
-  .avatar {
-    width:27px;
-    height:27px;
-    font-size:10px;
+  .timer-chip {
+    flex:none;
+    font:16px monospace;
+    color:var(--accent);
+  }
+  .timer-chip.ending {
+    color:var(--error);
+  }
+  #sheet-button {
+    flex:none;
+    width:44px;
+    height:44px;
+    margin-right:-10px;
+    border:0;
+    border-radius:8px;
+    background:transparent;
+    color:var(--text);
+    font-size:22px;
+    line-height:1;
+  }
+  .room-sidebar {
+    display:none;
+  }
+  .room-sidebar.open {
+    display:block;
+    position:fixed;
+    inset:auto 0 0 0;
+    z-index:20;
+    max-height:85%;
+    overflow-y:auto;
+    padding:12px 20px 24px;
+    background:var(--panel);
+    border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;
+    animation:sheet-in .2s ease-out;
+  }
+  @keyframes sheet-in {
+    from {
+      transform:translateY(100%);
+    }
+    to {
+      transform:none;
+    }
+  }
+  @media(prefers-reduced-motion:reduce) {
+    .room-sidebar.open {
+      animation:none;
+    }
+  }
+  /* The close button shares the title's row instead of taking a row of its own. */
+  .room-sidebar.open {
+    padding-top:20px;
+  }
+  .room-sidebar.open>.eyebrow {
+    display:none;
+  }
+  .room-sidebar.open #room-title {
+    padding-right:44px;
+  }
+  #sheet-close {
+    display:block;
+    position:absolute;
+    top:10px;
+    right:10px;
+    margin:0;
+    width:44px;
+    height:44px;
+    border:0;
+    border-radius:8px;
+    background:transparent;
+    color:var(--text);
+    font-size:24px;
+    line-height:1;
+  }
+  #sheet-backdrop:not([hidden]) {
+    display:block;
+    position:fixed;
+    inset:0;
+    z-index:10;
+    background:rgba(0,0,0,.55);
+  }
+  .room-sidebar .timer-card {
+    display:none;
+  }
+  .room-sidebar #room-title {
+    font-size:22px;
+    margin:0 0 16px;
+    overflow-wrap:anywhere;
+  }
+  .room-sidebar .participants li {
+    font-size:14px;
+  }
+  .room-sidebar .avatar {
+    flex:none;
+  }
+  .room-sidebar .participants small {
+    margin-left:auto;
+    color:var(--muted);
+  }
+  .conversation {
+    flex:1;
+    min-height:0;
+    height:auto;
+    max-height:none;
+    margin:0 0 12px;
+  }
+  .messages-wrap {
+    flex:1;
+    min-height:0;
   }
   .trust-strip {
     padding:12px 17px;
-  }
-  .sidebar-note {
-    display:none;
-  }
-  .danger-link {
-    grid-column:1/-1;
-    text-align:left;
-  }
-  .conversation {
-    height:65dvh;
-    min-height:400px;
   }
   .conversation-head {
     padding:17px;
@@ -1106,7 +1184,12 @@ footer>span:first-child {
   .composer-hint {
     padding-left:14px;
     padding-right:14px;
-    font-size:8px;
+    justify-content:flex-end;
+    white-space:nowrap;
+  }
+  /* No Shift key on a phone keyboard: the shortcut hint only wrapped and pushed the counter. */
+  .composer-hint>span:first-child {
+    display:none;
   }
   .message {
     max-width:92%;
@@ -1114,8 +1197,48 @@ footer>span:first-child {
   .bubble {
     font-size:13px;
   }
-  .eyebrow {
-    font-size:9px;
+  #chat.ended .messages-wrap {
+    display:none;
+  }
+  #chat .ended-panel {
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    border-top:0;
+  }
+  #chat .trust-strip {
+    max-height:40%;
+    overflow-y:auto;
+  }
+  #chat .eyebrow {
+    font-size:12px;
+  }
+  /* Text floor: nothing on the chat screen is below 12px. */
+  #chat .conversation-label,
+  #chat .conversation-head,
+  #chat .retry-connection,
+  #chat .retry-message,
+  #chat .timer-card>span,
+  #chat .avatar,
+  #chat .participants small,
+  #chat .participants-heading>span:last-child,
+  #chat .composer-hint,
+  #chat .sidebar-note,
+  #chat .notify-panel p,
+  #chat .message-meta,
+  #chat .message-actions,
+  #chat .message-note,
+  #chat .jump-button,
+  #chat .secondary,
+  #chat .danger-link {
+    font-size:12px;
+  }
+  /* Fields at 16px: iOS Safari zooms the page into any smaller field on focus. */
+  input,
+  select,
+  #chat .composer textarea {
+    font-size:16px;
   }
 }
 
@@ -1141,18 +1264,44 @@ footer>span:first-child {
   border-color:var(--error);
 }
 
+/* A section like its neighbours, not another box: a lit lock beside a plain statement,
+   one line of why, and the actual ciphers as data. */
 .safety-panel {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  gap:6px 8px;
+  align-items:center;
   margin-top:22px;
-  padding:14px;
-  border:1px solid var(--line);
-  border-radius:6px;
+  padding-top:18px;
+  border-top:1px solid var(--line);
+}
+
+.safety-icon {
+  width:16px;
+  height:16px;
+  color:var(--accent);
+}
+
+.safety-panel strong {
+  font-size:14px;
+  font-weight:600;
+  line-height:1.3;
+  color:var(--accent);
 }
 
 .safety-panel p {
+  grid-column:1/-1;
   margin:0;
-  font-size:12px;
-  line-height:1.7;
+  font-size:13px;
+  line-height:1.5;
   color:var(--muted);
+  text-wrap:pretty;
+}
+
+.safety-panel .safety-spec {
+  margin-top:4px;
+  font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:var(--muted-subtle);
 }
 
 .message.undecryptable .bubble {
@@ -1248,12 +1397,6 @@ footer>span:first-child {
   font-size:11px;
   line-height:1.7;
   color:var(--muted);
-}
-
-@media(max-width:700px) {
-  .notify-panel {
-    grid-column:1/-1;
-  }
 }
 
 #end-dialog {

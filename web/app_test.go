@@ -570,8 +570,16 @@ func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {
 	if strings.Contains(funcBody(t, text, "function buildVerified("), "state.trustOpen = true") {
 		t.Error("Compare again leaves trustOpen stuck")
 	}
-	if !strings.Contains(page, `<section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><p>End-to-end encrypted in your browser.</p></section>`) {
-		t.Error("the sidebar encryption note is wrong")
+	panel := page[strings.Index(page, `<section id="safety-panel"`):]
+	panel = panel[:strings.Index(panel, "</section>")]
+	for _, want := range []string{`class="safety-panel"`, `<svg class="safety-icon" aria-hidden="true"`, `<strong>End-to-end encrypted</strong>`,
+		`<p>Messages are locked in this browser before they are sent. The server only sees ciphertext.</p>`} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("the sidebar encryption note lacks %q", want)
+		}
+	}
+	if strings.Contains(panel, "eyebrow") {
+		t.Error("the encryption note still uses an eyebrow label")
 	}
 
 	for _, copy := range []string{"Is this really them?", "Compare this code with your contact by voice or in another app. If it matches, you are talking to the right person.",
@@ -586,5 +594,310 @@ func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {
 	}
 	if strings.Contains(text, "if (e.name !== 'AbortError') throw e") {
 		t.Error("Share rethrows non-abort errors")
+	}
+}
+
+// mobileCSS returns the bodies of every @media(max-width:700px) block, joined.
+func mobileCSS(t *testing.T, css string) string {
+	t.Helper()
+	var out strings.Builder
+	rest := css
+	for {
+		i := strings.Index(rest, "@media(max-width:700px)")
+		if i < 0 {
+			return out.String()
+		}
+		rest = rest[i:]
+		depth, end := 0, 0
+		for j, c := range rest {
+			if c == '{' {
+				depth++
+			} else if c == '}' {
+				depth--
+				if depth == 0 {
+					end = j
+					break
+				}
+			}
+		}
+		if end == 0 {
+			t.Fatal("unbalanced braces in the mobile @media block")
+		}
+		out.WriteString(rest[:end])
+		rest = rest[end:]
+	}
+}
+
+func TestFrontendMobileShellLayout(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js, css := read("index.html"), read("app.js"), read("style.css")
+
+	chat := html[strings.Index(html, `<main id="chat"`):]
+	head := strings.Index(chat, `<header class="chat-head">`)
+	if head < 0 || head > strings.Index(chat, "room-sidebar") {
+		t.Error("chat-head must be the first child of #chat, before the sidebar")
+	}
+	for _, want := range []string{
+		`id="chat-head-title" tabindex="-1"`,
+		`id="room-sheet"`,
+		`interactive-widget=resizes-content`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	for id, attrs := range map[string][]string{
+		"chat-head-timer": {`aria-hidden="true"`},
+		"sheet-button":    {`aria-controls="room-sheet"`, `aria-label="Room details"`},
+	} {
+		tag := regexp.MustCompile(`<[^>]*id="` + id + `"[^>]*>`).FindString(html)
+		if tag == "" {
+			t.Errorf("index.html lacks #%s", id)
+		}
+		for _, a := range attrs {
+			if !strings.Contains(tag, a) {
+				t.Errorf("#%s lacks %s", id, a)
+			}
+		}
+	}
+	alert := `<p id="timer-alert" class="sr-only" role="status"></p>`
+	card := html[strings.Index(html, `id="timer-card"`):]
+	card = card[:strings.Index(card, "</div></div>")]
+	if !strings.Contains(html, alert) || strings.Contains(card, alert) {
+		t.Error("#timer-alert must live outside the timer card")
+	}
+
+	if !strings.Contains(js, "matchMedia('(max-width:700px)')") {
+		t.Error("app.js has no MOBILE media query")
+	}
+	enter := funcBody(t, js, "async function enter(")
+	for _, want := range []string{"classList.add('in-chat')", "$('chat-head-title').focus()", "$('room-title').focus()"} {
+		if !strings.Contains(enter, want) {
+			t.Errorf("enter() lacks %s", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, js, "function updateTimer("), "chat-head-timer") {
+		t.Error("updateTimer() does not mirror into the head chip")
+	}
+	fin := funcBody(t, js, "function finish(")
+	if !strings.Contains(fin, "'Ended'") || !strings.Contains(fin, "sheet-button") {
+		t.Error("finish() must show Ended and hide the sheet button")
+	}
+	restore := js[strings.Index(js, "const restoreFailed"):]
+	restore = restore[:strings.Index(restore, "};")]
+	if !strings.Contains(restore, "classList.remove('in-chat')") {
+		t.Error("restoreFailed does not drop in-chat")
+	}
+
+	m := mobileCSS(t, css)
+	for _, want := range []string{"min-height:0", "var(--app-height", "body.in-chat .header", "body.in-chat footer"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("mobile CSS lacks %s", want)
+		}
+	}
+	if !regexp.MustCompile(`\.messages-wrap\s*\{[^}]*min-height:0`).MatchString(m) {
+		t.Error("mobile .messages-wrap lacks min-height:0")
+	}
+	if !regexp.MustCompile(`#chat\s*\{[^}]*var\(--app-height`).MatchString(m) {
+		t.Error("mobile #chat does not use --app-height")
+	}
+	for _, re := range []string{
+		`#chat\.ended \.messages-wrap\s*\{\s*display:none`,
+		`#chat \.ended-panel\s*\{[^}]*flex:1[^}]*justify-content:center[^}]*border-top:0`,
+		`#chat \.trust-strip\s*\{[^}]*max-height:40%[^}]*overflow-y:auto`,
+	} {
+		if !regexp.MustCompile(re).MatchString(m) {
+			t.Errorf("mobile CSS lacks %s", re)
+		}
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "$('chat').classList.add('ended')") {
+		t.Error("finish() must mark #chat as ended")
+	}
+	if strings.Contains(m, "calc(100dvh - 245px)") || strings.Contains(m, "min-height:430px") {
+		t.Error("mobile CSS keeps the old fixed conversation height")
+	}
+	floor := m[strings.Index(m, "Text floor"):]
+	floor = floor[:strings.Index(floor, "}")]
+	for _, sel := range []string{".message-note", ".jump-button", ".notify-panel p", ".avatar", ".composer-hint"} {
+		if !strings.Contains(floor, "#chat "+sel) {
+			t.Errorf("12px floor does not cover #chat %s with enough specificity", sel)
+		}
+	}
+	if !strings.Contains(floor, "font-size:12px") {
+		t.Error("text floor is not 12px")
+	}
+	if !regexp.MustCompile(`(?s)\n\.chat-head\s*\{\s*display:none`).MatchString(css) {
+		t.Error(".chat-head is not hidden above 700px")
+	}
+	if strings.Count(funcBody(t, js, "function finish("), "$('timer-card').classList.remove('ending')") > 1 {
+		t.Error("finish() clears .ending on the timer card twice")
+	}
+}
+
+func TestFrontendMobileSheet(t *testing.T) {
+	read := func(name string) string {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	js, css, html := read("app.js"), read("style.css"), read("index.html")
+	for _, want := range []string{`id="sheet-close"`, `aria-label="Close"`, `id="sheet-backdrop"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	if strings.Index(html, `id="sheet-close"`) < strings.Index(html, `id="room-sheet"`) {
+		t.Error("#sheet-close must be inside .room-sidebar")
+	}
+	open := funcBody(t, js, "function openSheet(")
+	for _, want := range []string{"aria-modal", "'dialog'", "Room details", "inert = true", "$('sheet-close').focus()", "aria-expanded", "classList.add('open')"} {
+		if !strings.Contains(open, want) {
+			t.Errorf("openSheet lacks %s", want)
+		}
+	}
+	cl := funcBody(t, js, "function closeSheet(")
+	for _, want := range []string{"removeAttribute('aria-modal')", "removeAttribute('role')", "inert = false", "classList.remove('open')", "if (restoreFocus) $('sheet-button').focus()"} {
+		if !strings.Contains(cl, want) {
+			t.Errorf("closeSheet lacks %s", want)
+		}
+	}
+	if !regexp.MustCompile(`addEventListener\('keydown'[\s\S]{0,200}'Escape'[\s\S]{0,200}closeSheet\(`).MatchString(js) {
+		t.Error("Escape must close the sheet")
+	}
+	if !strings.Contains(js, "$('end-dialog').open") || !regexp.MustCompile(`'Escape'[\s\S]{0,120}end-dialog'\)\.open|end-dialog'\)\.open[\s\S]{0,120}'Escape'`).MatchString(js) {
+		t.Error("the Escape handler must ignore the event while the end dialog is open")
+	}
+	if !regexp.MustCompile(`\$\('sheet-backdrop'\)\.addEventListener\('click'[^\n]*closeSheet\(`).MatchString(js) {
+		t.Error("backdrop click must close the sheet")
+	}
+	if !regexp.MustCompile(`\$\('sheet-close'\)\.addEventListener\('click'[^\n]*closeSheet\(`).MatchString(js) ||
+		!regexp.MustCompile(`\$\('sheet-button'\)\.addEventListener\('click'[^\n]*openSheet\(`).MatchString(js) {
+		t.Error("sheet button and close button must open and close the sheet")
+	}
+	if !regexp.MustCompile(`MOBILE\.addEventListener\('change'[\s\S]{0,120}closeSheet\(\{ restoreFocus: false \}\)`).MatchString(js) {
+		t.Error("leaving the mobile width must close the sheet without moving focus")
+	}
+	if kf := funcBody(t, js, "function keyFailure("); !strings.Contains(kf, "closeSheet()") || strings.Index(kf, "closeSheet()") > strings.Index(kf, "safety-alert") {
+		t.Error("keyFailure must close the sheet before writing the alert")
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "closeSheet({ restoreFocus: false })") {
+		t.Error("finish() must close the sheet without restoring focus")
+	}
+	if strings.Contains(funcBody(t, js, "function openEndDialog("), "closeSheet") {
+		t.Error("openEndDialog must not touch the sheet")
+	}
+	if !strings.Contains(js, "$('end-dialog').addEventListener('close', () => (endReturnTo?.isConnected ? endReturnTo : $('trust-title')).focus());") {
+		t.Error("end dialog close handler must still return focus to endReturnTo")
+	}
+	m := mobileCSS(t, css)
+	for _, want := range []string{".room-sidebar.open", "inset:auto 0 0 0", "max-height:85%", "overflow-y:auto", "transform", "#sheet-backdrop", "prefers-reduced-motion"} {
+		if !strings.Contains(css, want) && !strings.Contains(m, want) {
+			t.Errorf("style.css lacks %s", want)
+		}
+	}
+	if !regexp.MustCompile(`prefers-reduced-motion[\s\S]{0,120}\.room-sidebar`).MatchString(css) {
+		t.Error("reduced motion must disable the sheet transition")
+	}
+	if !regexp.MustCompile(`#sheet-close,\s*#sheet-backdrop\s*\{\s*display:none`).MatchString(css) {
+		t.Error("#sheet-close and #sheet-backdrop must be hidden above 700px")
+	}
+	if !regexp.MustCompile(`\.room-sidebar \.timer-card\s*\{\s*display:none`).MatchString(m) {
+		t.Error("the timer card must be hidden inside the sheet")
+	}
+}
+
+func TestFrontendMobileKeyboard(t *testing.T) {
+	b, err := assets.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	sync := funcBody(t, js, "function syncViewport(")
+	if !strings.Contains(sync, "lastHeight") {
+		t.Error("syncViewport must only re-anchor when the height changed")
+	}
+	for _, want := range []string{"visualViewport", "vv.height", "vv.offsetTop", "--app-height", "removeProperty('--app-height')", "removeProperty('top')", "state.atBottom", "scrollHeight"} {
+		if !strings.Contains(sync, want) {
+			t.Errorf("syncViewport lacks %s", want)
+		}
+	}
+	for _, want := range []string{"visualViewport.addEventListener('resize'", "visualViewport.addEventListener('scroll'", "globalThis.visualViewport"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+	trust := funcBody(t, js, "function renderTrust(")
+	for _, want := range []string{"state.composerFocus", "MOBILE.matches", "'verify', 'verified', 'later'", "document.activeElement === $('message')"} {
+		if !strings.Contains(trust, want) {
+			t.Errorf("renderTrust lacks %s", want)
+		}
+	}
+	for _, ev := range []string{"focusin", "focusout"} {
+		i := strings.Index(js, "$('message').addEventListener('"+ev+"'")
+		if i < 0 {
+			t.Fatalf("no %s handler on #message", ev)
+		}
+		h := js[i:]
+		h = h[:strings.Index(h, "});")]
+		if strings.Contains(h, "e2ee.verified =") || strings.Contains(h, "trustOpen =") {
+			t.Errorf("%s handler must not change verification or trustOpen", ev)
+		}
+		if ev == "focusin" && !strings.Contains(h, "state.atBottom = nearBottom()") {
+			t.Error("focusin must record state.atBottom before the keyboard resizes the list")
+		}
+	}
+	if !strings.Contains(js, "$('messages').addEventListener('scroll', () => { state.atBottom = nearBottom();") {
+		t.Error("the #messages scroll listener must record state.atBottom")
+	}
+	for _, name := range []string{"async function enter(", "const restoreFailed = () => {"} {
+		if !strings.Contains(funcBody(t, js, name), "syncViewport()") {
+			t.Errorf("%s lacks syncViewport()", name)
+		}
+	}
+}
+
+// iOS Safari zooms the page when a focused field's text is under 16px, which pushed the
+// mobile chat's badge, send button and ⋯ off screen. Every phone-width field must be 16px.
+func TestFrontendMobileFieldsAvoidIOSZoom(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := mobileCSS(t, string(css))
+	rule := regexp.MustCompile(`(?s)Fields at 16px[^{]*\{[^}]*\}`).FindString(m)
+	if rule == "" {
+		t.Fatal("mobile block has no 16px field rule")
+	}
+	for _, selector := range []string{"input", "select", ".composer textarea"} {
+		if !strings.Contains(rule, selector) {
+			t.Errorf("16px field rule does not cover %s", selector)
+		}
+	}
+	if !strings.Contains(rule, "font-size:16px") {
+		t.Error("field rule is not 16px")
+	}
+}
+
+// On a phone the keyboard-shortcut hint wrapped onto two lines and pushed the message
+// counter around; there is no Shift key there, so it is hidden and the row stays one line.
+func TestFrontendMobileComposerHintStaysOneLine(t *testing.T) {
+	css, err := assets.ReadFile("style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := mobileCSS(t, string(css))
+	if !regexp.MustCompile(`\.composer-hint>span:first-child\s*\{\s*display:none`).MatchString(m) {
+		t.Error("the shortcut hint is not hidden on phones")
+	}
+	if !regexp.MustCompile(`\.composer-hint\s*\{[^}]*white-space:nowrap`).MatchString(m) {
+		t.Error("the composer hint row can still wrap on phones")
 	}
 }

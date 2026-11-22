@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
   <meta name="theme-color" content="#111514">
   <meta name="description" content="A temporary chat for two. Create a room, share a link and talk without signing up.">
   <title>nullchat — just talk</title>
@@ -59,16 +59,20 @@
     </main>
 
     <main id="chat" class="chat-layout" hidden>
-      <aside class="room-sidebar">
+      <header class="chat-head"><h2 id="chat-head-title" tabindex="-1"></h2><span id="chat-head-timer" class="timer-chip" aria-hidden="true">--:--</span><button id="sheet-button" type="button" aria-controls="room-sheet" aria-expanded="false" aria-label="Room details">⋯</button></header>
+      <p id="timer-alert" class="sr-only" role="status"></p>
+      <aside id="room-sheet" class="room-sidebar">
+        <button id="sheet-close" type="button" aria-label="Close">×</button>
         <p class="eyebrow">YOUR SPACE</p><h2 id="room-title" tabindex="-1">Quiet conversation</h2>
-        <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div><p id="timer-alert" class="sr-only" role="status"></p></div>
+        <div id="timer-card" class="timer-card"><span>Time left</span><strong id="timer">--:--</strong><div class="timer-track"><div id="timer-bar"></div></div></div>
         <div class="participants-heading"><span class="eyebrow">PARTICIPANTS</span><span id="participant-count">1 / 2</span></div>
         <ul id="participants" class="participants"></ul>
-        <section id="safety-panel" class="safety-panel"><span class="eyebrow">ENCRYPTION</span><p>End-to-end encrypted in your browser.</p></section>
+        <section id="safety-panel" class="safety-panel"><svg class="safety-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2"/></svg><strong>End-to-end encrypted</strong><p>Messages are locked in this browser before they are sent. The server only sees ciphertext.</p><p class="safety-spec">AES-256-GCM · ECDH P-256</p></section>
         <section id="notify-panel" class="notify-panel" hidden><button id="notify-button" class="secondary" type="button">Turn on notifications</button><p id="notify-note"></p></section>
         <p class="sidebar-note">You can reload the tab: while the room is open, the conversation continues.</p>
         <button id="end-button" class="danger-link" type="button">End the chat for both ↗</button>
       </aside>
+      <div id="sheet-backdrop" hidden></div>
       <section class="conversation" aria-label="Conversation">
         <div class="conversation-head"><div class="connection-state"><span><span class="dot" id="connection-dot"></span><span id="connection-status" role="status">Connecting…</span></span><button id="reconnect-button" class="retry-connection" type="button" hidden>Reconnect</button></div><span class="conversation-label">PRIVATE CONVERSATION</span><button id="trust-badge" class="trust-badge" type="button" aria-controls="trust-strip" aria-expanded="false" hidden></button><p id="trust-status" class="sr-only" role="status"></p></div>
         <section id="trust-strip" class="trust-strip" aria-labelledby="trust-title" hidden><h3 id="trust-title" tabindex="-1"></h3><div id="trust-body"></div><p id="safety-alert" class="sr-only" role="alert"></p></section>
