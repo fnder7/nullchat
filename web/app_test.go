@@ -794,7 +794,7 @@ func TestFrontendMobileKeyboard(t *testing.T) {
 	}
 	js := string(b)
 	sync := funcBody(t, js, "function syncViewport(")
-	for _, want := range []string{"visualViewport", "vv.height", "vv.offsetTop", "--app-height", "removeProperty('--app-height')", "nearBottom(box)", "scrollHeight"} {
+	for _, want := range []string{"visualViewport", "vv.height", "vv.offsetTop", "--app-height", "removeProperty('--app-height')", "removeProperty('top')", "state.atBottom", "scrollHeight"} {
 		if !strings.Contains(sync, want) {
 			t.Errorf("syncViewport lacks %s", want)
 		}
@@ -805,7 +805,7 @@ func TestFrontendMobileKeyboard(t *testing.T) {
 		}
 	}
 	trust := funcBody(t, js, "function renderTrust(")
-	for _, want := range []string{"state.composerFocus", "MOBILE.matches", "'verify', 'verified', 'later'"} {
+	for _, want := range []string{"state.composerFocus", "MOBILE.matches", "'verify', 'verified', 'later'", "document.activeElement === $('message')"} {
 		if !strings.Contains(trust, want) {
 			t.Errorf("renderTrust lacks %s", want)
 		}
@@ -815,10 +815,17 @@ func TestFrontendMobileKeyboard(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("no %s handler on #message", ev)
 		}
-		line := js[i : i+strings.Index(js[i:], "\n")]
-		if strings.Contains(line, "e2ee.verified =") || strings.Contains(line, "trustOpen =") {
+		h := js[i:]
+		h = h[:strings.Index(h, "});")]
+		if strings.Contains(h, "e2ee.verified =") || strings.Contains(h, "trustOpen =") {
 			t.Errorf("%s handler must not change verification or trustOpen", ev)
 		}
+		if ev == "focusin" && !strings.Contains(h, "state.atBottom = nearBottom()") {
+			t.Error("focusin must record state.atBottom before the keyboard resizes the list")
+		}
+	}
+	if !strings.Contains(js, "$('messages').addEventListener('scroll', () => { state.atBottom = nearBottom();") {
+		t.Error("the #messages scroll listener must record state.atBottom")
 	}
 	for _, name := range []string{"async function enter(", "const restoreFailed = () => {"} {
 		if !strings.Contains(funcBody(t, js, name), "syncViewport()") {

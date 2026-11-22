@@ -16,7 +16,7 @@ const state = {
   pending: new Map(), failed: new Map(), accepted: new Map(),
   ended: false, connected: false, retry: 0, reconnectTimer: null, totalSeconds: 0,
   unseen: 0, unread: 0, timerWarned: false, notification: null,
-  trustOpen: false, composerFocus: false, trustShown: '', safetyCode: undefined,
+  trustOpen: false, composerFocus: false, atBottom: true, trustShown: '', safetyCode: undefined,
 };
 // A create/join request is encrypted once and reused verbatim on retry, so the
 // Idempotency-Key replays the same room with key shares this tab still holds.
@@ -169,6 +169,7 @@ const trustNow = () => trustState({
   hasInvite: !!(state.invite && state.e2ee?.secret), code: state.safetyCode, verified: state.e2ee?.verified,
 });
 function renderTrust() {
+  state.composerFocus = document.activeElement === $('message'); // a disabled composer may lose focus without a focusout
   // Two people but no code yet (the key is still being derived): keep what is shown.
   if (!state.ended && !state.keyError && state.room.participants.length > 1 && !state.safetyCode) return;
   const next = trustNow();
@@ -729,16 +730,17 @@ MOBILE.addEventListener('change', () => { if (!MOBILE.matches) closeSheet({ rest
 function syncViewport() {
   const chat = $('chat'), vv = globalThis.visualViewport;
   if (!vv || chat.hidden || !MOBILE.matches) { chat.style.removeProperty('--app-height'); chat.style.removeProperty('top'); return; }
-  const box = $('messages'), wasAtBottom = nearBottom(box);
+  const box = $('messages');
   chat.style.setProperty('--app-height', `${vv.height}px`);
   chat.style.top = `${vv.offsetTop}px`;
-  if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  // Android shrinks the layout before this event fires, so use the flag recorded earlier.
+  if (state.atBottom) box.scrollTop = box.scrollHeight;
 }
 if (globalThis.visualViewport) {
   visualViewport.addEventListener('resize', syncViewport);
   visualViewport.addEventListener('scroll', syncViewport);
 }
-$('message').addEventListener('focusin', () => { state.composerFocus = true; renderTrust(); });
+$('message').addEventListener('focusin', () => { state.atBottom = nearBottom(); state.composerFocus = true; renderTrust(); });
 $('message').addEventListener('focusout', () => { state.composerFocus = false; renderTrust(); });
 let endReturnTo = null;
 function openEndDialog(reason, returnTo) {
@@ -803,7 +805,7 @@ function updateComposer() {
   $('byte-count').classList.toggle('over', bytes > e2ee.MAX_TEXT_BYTES);
 }
 $('message').addEventListener('input', () => { $('message').style.height = 'auto'; $('message').style.height = `${Math.min($('message').scrollHeight, 120)}px`; updateComposer(); });
-$('messages').addEventListener('scroll', () => { if (state.unseen && nearBottom()) { state.unseen = 0; showUnseen(); } }, { passive: true });
+$('messages').addEventListener('scroll', () => { state.atBottom = nearBottom(); if (state.unseen && nearBottom()) { state.unseen = 0; showUnseen(); } }, { passive: true });
 $('jump-button').addEventListener('click', () => {
   const box = $('messages');
   box.scrollTo({ top: box.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
