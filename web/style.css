@@ -1178,6 +1178,20 @@ footer>span:first-child {
   .bubble {
     font-size:13px;
   }
+  #chat.ended .messages-wrap {
+    display:none;
+  }
+  #chat .ended-panel {
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    border-top:0;
+  }
+  #chat .trust-strip {
+    max-height:40%;
+    overflow-y:auto;
+  }
   #chat .eyebrow {
     font-size:12px;
   }

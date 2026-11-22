@@ -590,7 +590,8 @@ func TestFrontendVerifiesSafetyCodeLocally(t *testing.T) {
 }
 
 // mobileCSS returns the bodies of every @media(max-width:700px) block, joined.
-func mobileCSS(css string) string {
+func mobileCSS(t *testing.T, css string) string {
+	t.Helper()
 	var out strings.Builder
 	rest := css
 	for {
@@ -610,6 +611,9 @@ func mobileCSS(css string) string {
 					break
 				}
 			}
+		}
+		if end == 0 {
+			t.Fatal("unbalanced braces in the mobile @media block")
 		}
 		out.WriteString(rest[:end])
 		rest = rest[end:]
@@ -683,7 +687,7 @@ func TestFrontendMobileShellLayout(t *testing.T) {
 		t.Error("restoreFailed does not drop in-chat")
 	}
 
-	m := mobileCSS(css)
+	m := mobileCSS(t, css)
 	for _, want := range []string{"min-height:0", "var(--app-height", "body.in-chat .header", "body.in-chat footer"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("mobile CSS lacks %s", want)
@@ -694,6 +698,18 @@ func TestFrontendMobileShellLayout(t *testing.T) {
 	}
 	if !regexp.MustCompile(`#chat\s*\{[^}]*var\(--app-height`).MatchString(m) {
 		t.Error("mobile #chat does not use --app-height")
+	}
+	for _, re := range []string{
+		`#chat\.ended \.messages-wrap\s*\{\s*display:none`,
+		`#chat \.ended-panel\s*\{[^}]*flex:1[^}]*justify-content:center[^}]*border-top:0`,
+		`#chat \.trust-strip\s*\{[^}]*max-height:40%[^}]*overflow-y:auto`,
+	} {
+		if !regexp.MustCompile(re).MatchString(m) {
+			t.Errorf("mobile CSS lacks %s", re)
+		}
+	}
+	if !strings.Contains(funcBody(t, js, "function finish("), "$('chat').classList.add('ended')") {
+		t.Error("finish() must mark #chat as ended")
 	}
 	if strings.Contains(m, "calc(100dvh - 245px)") || strings.Contains(m, "min-height:430px") {
 		t.Error("mobile CSS keeps the old fixed conversation height")
@@ -761,6 +777,9 @@ func TestFrontendMobileSheet(t *testing.T) {
 	if !regexp.MustCompile(`MOBILE\.addEventListener\('change'[\s\S]{0,120}closeSheet\(\{ restoreFocus: false \}\)`).MatchString(js) {
 		t.Error("leaving the mobile width must close the sheet without moving focus")
 	}
+	if kf := funcBody(t, js, "function keyFailure("); !strings.Contains(kf, "closeSheet()") || strings.Index(kf, "closeSheet()") > strings.Index(kf, "safety-alert") {
+		t.Error("keyFailure must close the sheet before writing the alert")
+	}
 	if !strings.Contains(funcBody(t, js, "function finish("), "closeSheet({ restoreFocus: false })") {
 		t.Error("finish() must close the sheet without restoring focus")
 	}
@@ -770,7 +789,7 @@ func TestFrontendMobileSheet(t *testing.T) {
 	if !strings.Contains(js, "$('end-dialog').addEventListener('close', () => (endReturnTo?.isConnected ? endReturnTo : $('trust-title')).focus());") {
 		t.Error("end dialog close handler must still return focus to endReturnTo")
 	}
-	m := mobileCSS(css)
+	m := mobileCSS(t, css)
 	for _, want := range []string{".room-sidebar.open", "inset:auto 0 0 0", "max-height:85%", "overflow-y:auto", "transform", "#sheet-backdrop", "prefers-reduced-motion"} {
 		if !strings.Contains(css, want) && !strings.Contains(m, want) {
 			t.Errorf("style.css lacks %s", want)
@@ -794,6 +813,9 @@ func TestFrontendMobileKeyboard(t *testing.T) {
 	}
 	js := string(b)
 	sync := funcBody(t, js, "function syncViewport(")
+	if !strings.Contains(sync, "lastHeight") {
+		t.Error("syncViewport must only re-anchor when the height changed")
+	}
 	for _, want := range []string{"visualViewport", "vv.height", "vv.offsetTop", "--app-height", "removeProperty('--app-height')", "removeProperty('top')", "state.atBottom", "scrollHeight"} {
 		if !strings.Contains(sync, want) {
 			t.Errorf("syncViewport lacks %s", want)

@@ -108,6 +108,7 @@ async function enter(credentials, fresh = null) {
 
 const KEY_NOTE = 'Your contact\'s key was replaced or the link is damaged. Do not continue: end the chat and create a new room.';
 function keyFailure() {
+  closeSheet(); // the open sheet makes .conversation inert, which would silence the alert
   state.keyError = true;
   state.messageKey = null;
   renderTrust();
@@ -463,6 +464,7 @@ function connection(connected, label) {
 }
 function finish(label) {
   state.ended = true;
+  $('chat').classList.add('ended');
   closeSheet({ restoreFocus: false });
   if ($('end-dialog').open) $('end-dialog').close();
   clearTimeout(state.reconnectTimer);
@@ -727,14 +729,16 @@ $('sheet-backdrop').addEventListener('click', () => closeSheet());
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('end-dialog').open) closeSheet(); });
 MOBILE.addEventListener('change', () => { if (!MOBILE.matches) closeSheet({ restoreFocus: false }); syncViewport(); });
 // iOS Safari keeps the layout viewport under the keyboard: follow the visual one while the chat is on screen.
+let lastHeight = 0;
 function syncViewport() {
   const chat = $('chat'), vv = globalThis.visualViewport;
   if (!vv || chat.hidden || !MOBILE.matches) { chat.style.removeProperty('--app-height'); chat.style.removeProperty('top'); return; }
-  const box = $('messages');
+  const box = $('messages'), changed = vv.height !== lastHeight;
+  lastHeight = vv.height;
   chat.style.setProperty('--app-height', `${vv.height}px`);
   chat.style.top = `${vv.offsetTop}px`;
   // Android shrinks the layout before this event fires, so use the flag recorded earlier.
-  if (state.atBottom) box.scrollTop = box.scrollHeight;
+  if (changed && state.atBottom) box.scrollTop = box.scrollHeight;
 }
 if (globalThis.visualViewport) {
   visualViewport.addEventListener('resize', syncViewport);
