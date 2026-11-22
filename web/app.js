@@ -478,7 +478,6 @@ function finish(label) {
   $('end-button').hidden = true;
   $('chat-head-timer').textContent = 'Ended';
   $('chat-head-timer').classList.remove('ending');
-  $('timer-card').classList.remove('ending');
   $('sheet-button').hidden = true;
   $('message-form').hidden = true;
   document.querySelector('.composer-hint').hidden = true;

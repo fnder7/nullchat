@@ -698,4 +698,20 @@ func TestFrontendMobileShellLayout(t *testing.T) {
 	if strings.Contains(m, "calc(100dvh - 245px)") || strings.Contains(m, "min-height:430px") {
 		t.Error("mobile CSS keeps the old fixed conversation height")
 	}
+	floor := m[strings.Index(m, "Text floor"):]
+	floor = floor[:strings.Index(floor, "}")]
+	for _, sel := range []string{".message-note", ".jump-button", ".notify-panel p", ".avatar", ".composer-hint"} {
+		if !strings.Contains(floor, "#chat "+sel) {
+			t.Errorf("12px floor does not cover #chat %s with enough specificity", sel)
+		}
+	}
+	if !strings.Contains(floor, "font-size:12px") {
+		t.Error("text floor is not 12px")
+	}
+	if !regexp.MustCompile(`(?s)\n\.chat-head\s*\{\s*display:none`).MatchString(css[:strings.Index(css, "@media(max-width:700px)")+0] + css) {
+		t.Error(".chat-head is not hidden above 700px")
+	}
+	if strings.Count(funcBody(t, js, "function finish("), "$('timer-card').classList.remove('ending')") > 1 {
+		t.Error("finish() clears .ending on the timer card twice")
+	}
 }

@@ -1114,23 +1114,23 @@ footer>span:first-child {
     font-size:12px;
   }
   /* Text floor: nothing on the chat screen is below 12px. */
-  .conversation-label,
-  .conversation-head,
-  .retry-connection,
-  .retry-message,
-  .timer-card>span,
-  .avatar,
-  .participants small,
-  .participants-heading>span:last-child,
-  .composer-hint,
-  .sidebar-note,
-  .notify-panel p,
-  .message-meta,
-  .message-actions,
-  .message-note,
-  .jump-button,
+  #chat .conversation-label,
+  #chat .conversation-head,
+  #chat .retry-connection,
+  #chat .retry-message,
+  #chat .timer-card>span,
+  #chat .avatar,
+  #chat .participants small,
+  #chat .participants-heading>span:last-child,
+  #chat .composer-hint,
+  #chat .sidebar-note,
+  #chat .notify-panel p,
+  #chat .message-meta,
+  #chat .message-actions,
+  #chat .message-note,
+  #chat .jump-button,
   #chat .secondary,
-  .danger-link {
+  #chat .danger-link {
     font-size:12px;
   }
 }
